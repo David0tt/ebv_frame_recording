@@ -17,6 +17,21 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDir>
+#include <QPixmap>
+#include <QImage>
+
+#include <metavision/sdk/stream/camera.h>
+#include <metavision/sdk/core/utils/cd_frame_generator.h>
+
+#include <opencv2/opencv.hpp>
+
+#include <filesystem>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <optional>
+#include <vector>
+#include <algorithm>
 
 /*
  Mockup video player UI layout (no real data connection yet):
@@ -61,6 +76,39 @@ static Pane createPane(const QString &title, const QColor &color) {
     layout->addWidget(p.content, 1);
     return p;
 }
+
+static QImage cvMatToQImage(const cv::Mat &mat) {
+    if (mat.empty()) return {};
+    cv::Mat rgb;
+    switch (mat.type()) {
+        case CV_8UC1:
+            cv::cvtColor(mat, rgb, cv::COLOR_GRAY2RGBA);
+            break;
+        case CV_8UC3:
+            cv::cvtColor(mat, rgb, cv::COLOR_BGR2RGBA);
+            break;
+        case CV_8UC4:
+            rgb = mat.clone();
+            break;
+        default:
+            return {};
+    }
+    return QImage(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), QImage::Format_RGBA8888).copy();
+}
+
+struct FrameCameraData {
+    std::vector<std::string> image_files; // sorted
+    // Lazy load cache for current frame
+    cv::Mat loadFrame(size_t idx) const {
+        if (idx >= image_files.size()) return {};
+        return cv::imread(image_files[idx], cv::IMREAD_UNCHANGED);
+    }
+};
+
+struct EventCameraData {
+    // Pre-generated event accumulation frames as QImages
+    std::vector<QImage> frames;
+};
 
 class PlayerWindow : public QWidget {
     Q_OBJECT
@@ -144,6 +192,12 @@ public:
         });
 
         connect(m_openButton, &QPushButton::clicked, this, [this]{ selectAndLoadFolder(); });
+
+        connect(m_timelineSlider, &QSlider::valueChanged, this, [this](int v){
+            if (!m_dataReady.load()) return;
+            m_currentIndex = v;
+            updateDisplays();
+        });
     }
 
     void selectAndLoadFolder() {
@@ -159,13 +213,23 @@ public:
             QMessageBox::warning(this, tr("Folder Missing"), tr("Directory does not exist:\n%1").arg(dirPath));
             return;
         }
-        m_loadedDir = dirPath;
-        m_pathLabel->setText(tr("Loaded: %1").arg(dirPath));
-        // Update pane placeholder content to reflect loaded directory (mock behavior)
-        for (auto &p : m_panes) {
-            p.content->setText(tr("Loaded folder:\n%1\n(placeholder view)").arg(dir.dirName()));
+        if (m_loaderThread.joinable()) {
+            m_abortLoading = true;
+            m_loaderThread.join();
         }
-        // Potential future: scan for number of frames/events and set slider maximum accordingly
+        m_loadedDir = dirPath;
+        m_pathLabel->setText(tr("Loading: %1 ...").arg(dirPath));
+        m_dataReady = false;
+        m_abortLoading = false;
+        m_frameCams.clear();
+        m_eventCams.clear();
+        m_currentIndex = 0;
+        m_timelineSlider->setValue(0);
+
+        // Clear panes
+        for (auto &p : m_panes) p.content->setText("Loading...");
+
+        m_loaderThread = std::thread([this, path = dirPath.toStdString()](){ this->loadDataWorker(path); });
     }
 
     void autoLoadIfProvided(const QString &dirPath) {
@@ -175,6 +239,124 @@ public:
     }
 
 private:
+    void loadDataWorker(const std::string &dirPath) {
+        namespace fs = std::filesystem;
+        try {
+            // Frame cameras: frame_cam0, frame_cam1
+            for (int cam = 0; cam < 2; ++cam) {
+                FrameCameraData fcd;
+                fs::path camDir = fs::path(dirPath) / ("frame_cam" + std::to_string(cam));
+                if (fs::exists(camDir) && fs::is_directory(camDir)) {
+                    for (auto &entry : fs::directory_iterator(camDir)) {
+                        if (entry.is_regular_file()) {
+                            auto ext = entry.path().extension().string();
+                            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                            if (ext == ".jpg" || ext == ".png" || ext == ".jpeg") {
+                                fcd.image_files.push_back(entry.path().string());
+                            }
+                        }
+                    }
+                    std::sort(fcd.image_files.begin(), fcd.image_files.end());
+                }
+                m_frameCams.push_back(std::move(fcd));
+            }
+
+            // Event cameras: ebv_cam_0.*, ebv_cam_1.* (raw/hdf5)
+            for (int cam = 0; cam < 2; ++cam) {
+                EventCameraData ecd;
+                fs::path fileH5 = fs::path(dirPath) / ("ebv_cam_" + std::to_string(cam) + ".hdf5");
+                fs::path fileRaw = fs::path(dirPath) / ("ebv_cam_" + std::to_string(cam) + ".raw");
+                fs::path useFile;
+                if (fs::exists(fileH5)) useFile = fileH5; else if (fs::exists(fileRaw)) useFile = fileRaw;
+                if (!useFile.empty()) {
+                    // Load events and build accumulation frames
+                    Metavision::Camera camObj;
+                    try {
+                        camObj = Metavision::Camera::from_file(useFile.string());
+                        auto &geometry = camObj.geometry();
+                        int width = geometry.get_width();
+                        int height = geometry.get_height();
+                        Metavision::CDFrameGenerator generator(width, height);
+                        generator.set_display_accumulation_time_us(33333); // ~30 fps
+                        std::mutex gMutex;
+                        generator.start(30, [&ecd,&gMutex,this](const Metavision::timestamp &ts, const cv::Mat &frame){
+                            if (m_abortLoading) return;
+                            cv::Mat gray;
+                            if (frame.channels()==1) gray = frame; else cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+                            ecd.frames.push_back(cvMatToQImage(gray));
+                        });
+                        camObj.cd().add_callback([&generator,&gMutex](const Metavision::EventCD *begin, const Metavision::EventCD *end){
+                            std::lock_guard<std::mutex> lock(gMutex);
+                            generator.add_events(begin, end);
+                        });
+                        camObj.start();
+                        // Poll until end of file
+                        while (!m_abortLoading) {
+                            // Heuristic: break when camera has no more data (from_file stops producing events)
+                            // We can't directly query so limit maximum loop iterations without new frames.
+                            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                            if (!camObj.is_running()) break; // if API available
+                        }
+                        camObj.stop();
+                        generator.stop();
+                    } catch (const std::exception &e) {
+                        // Leave ecd empty but note error frame
+                        QImage errImg(400,200,QImage::Format_RGBA8888);
+                        errImg.fill(Qt::black);
+                        ecd.frames.push_back(errImg);
+                    }
+                }
+                m_eventCams.push_back(std::move(ecd));
+            }
+
+            // Compute timeline length
+            size_t maxFrameCount = 0;
+            for (auto &f : m_frameCams) maxFrameCount = std::max(maxFrameCount, f.image_files.size());
+            size_t maxEventCount = 0;
+            for (auto &e : m_eventCams) maxEventCount = std::max(maxEventCount, e.frames.size());
+            size_t total = std::max(maxFrameCount, maxEventCount);
+            if (total == 0) total = 1;
+            m_totalFrames = total;
+
+            QMetaObject::invokeMethod(this, [this, dirPath]{
+                m_pathLabel->setText(tr("Loaded: %1").arg(QString::fromStdString(dirPath)));
+                m_timelineSlider->setRange(0, static_cast<int>(m_totalFrames-1));
+                m_dataReady = true;
+                updateDisplays();
+            }, Qt::QueuedConnection);
+        } catch (...) {
+            QMetaObject::invokeMethod(this, [this]{
+                m_pathLabel->setText("Failed to load");
+                for (auto &p : m_panes) p.content->setText("Load failed");
+            }, Qt::QueuedConnection);
+        }
+    }
+
+    void updateDisplays() {
+        if (!m_dataReady.load()) return;
+        size_t idx = m_currentIndex;
+        // Frame cameras
+        for (int cam=0; cam<2; ++cam) {
+            if (cam < (int)m_frameCams.size() && idx < m_frameCams[cam].image_files.size()) {
+                cv::Mat img = m_frameCams[cam].loadFrame(idx);
+                if (!img.empty()) {
+                    QPixmap pm = QPixmap::fromImage(cvMatToQImage(img)).scaled(m_panes[cam].content->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    m_panes[cam].content->setPixmap(pm);
+                } else m_panes[cam].content->setText("(no frame)");
+            } else m_panes[cam].content->setText("(no frame)");
+        }
+        // Event cameras
+        for (int cam=0; cam<2; ++cam) {
+            int paneIndex = 2 + cam; // bottom row
+            if (cam < (int)m_eventCams.size() && idx < m_eventCams[cam].frames.size() && !m_eventCams[cam].frames[idx].isNull()) {
+                QPixmap pm = QPixmap::fromImage(m_eventCams[cam].frames[idx]).scaled(m_panes[paneIndex].content->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                m_panes[paneIndex].content->setPixmap(pm);
+            } else {
+                m_panes[paneIndex].content->setText("(no events)");
+            }
+        }
+    }
+
     QPushButton *m_openButton {nullptr};
     QLabel *m_pathLabel {nullptr};
     QSlider *m_timelineSlider {nullptr};
@@ -184,6 +366,23 @@ private:
     QTimer m_timer;
     QString m_loadedDir;
     std::vector<Pane> m_panes;
+    std::thread m_loaderThread;
+    std::atomic<bool> m_abortLoading {false};
+    std::atomic<bool> m_dataReady {false};
+    std::vector<FrameCameraData> m_frameCams;
+    std::vector<EventCameraData> m_eventCams;
+    std::atomic<size_t> m_currentIndex {0};
+    size_t m_totalFrames {1};
+protected:
+    void resizeEvent(QResizeEvent *e) override {
+        QWidget::resizeEvent(e);
+        updateDisplays();
+    }
+public:
+    ~PlayerWindow() override {
+        m_abortLoading = true;
+        if (m_loaderThread.joinable()) m_loaderThread.join();
+    }
 };
 
 int main(int argc, char *argv[]) {
@@ -200,6 +399,8 @@ int main(int argc, char *argv[]) {
     w.show();
     w.autoLoadIfProvided(recordingDir);
     return app.exec();
-}
+    }
 
+// TODO try to understand this better, this does not feel right
+// Required when Q_OBJECT appears only in this implementation file
 #include "video_player_mockup.moc"

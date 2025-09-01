@@ -126,7 +126,16 @@ add_executable(video_player_mockup
     src/video_player_mockup.cpp
 )
 
-target_link_libraries(video_player_mockup PRIVATE ${QT_WIDGETS_LIB})
+target_link_libraries(video_player_mockup PRIVATE 
+    ${QT_WIDGETS_LIB}
+    ${OpenCV_LIBS}
+    Threads::Threads
+    MetavisionSDK::base
+    MetavisionSDK::core
+    MetavisionSDK::stream
+    MetavisionSDK::ui
+    Metavision::HAL
+)
 
 set_target_properties(video_player_mockup PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
