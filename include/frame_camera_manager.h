@@ -15,13 +15,12 @@ public:
     ~FrameCameraManager();
 
     void openAndSetupDevices();
-    void startAcquisition();
-    void stopAcquisition();
-    void saveFrames(const std::string& path);
+    void startRecording(const std::string& outputPath);
+    void stopRecording();
 
 private:
     void setupDevice(std::shared_ptr<peak::core::Device> device);
-    void acquisitionWorker(int deviceId);
+    void acquisitionWorker(int deviceId, const std::string& outputPath);
 
     std::vector<std::shared_ptr<peak::core::Device>> m_devices;
     std::vector<std::shared_ptr<peak::core::DataStream>> m_dataStreams;

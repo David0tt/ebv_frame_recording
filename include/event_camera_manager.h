@@ -9,6 +9,7 @@
 #include <metavision/sdk/stream/camera.h>
 #include <metavision/hal/facilities/i_camera_synchronization.h>
 #include <metavision/hal/facilities/i_ll_biases.h>
+#include <metavision/hal/device/device_discovery.h>
 
 struct BiasLimits {
     int min_value;
@@ -17,31 +18,34 @@ struct BiasLimits {
 
 class EventCameraManager {
 public:
+    using BiasConfig = std::unordered_map<std::string, int>; 
+    struct CameraConfig {
+        std::string serial;
+        std::unordered_map<std::string,int> biases; // biases matched to this serial
+    };
+
     EventCameraManager();
     ~EventCameraManager();
 
-    // Open and setup event cameras
-    void openDevices(const std::string& serialMaster, const std::string& serialSlave);
-    
-    // Set biases for both cameras
-    void setBiases(const std::unordered_map<std::string, int>& biasesMaster, 
-                   const std::unordered_map<std::string, int>& biasesSlave);
-    
-    // Start recording to files
+    // NOTE: This code is in principle compatible with an arbitrary number of event cameras,
+    // but it has only been tested for two cameras
+    void openAndSetupDevices(const std::vector<CameraConfig>& cameraConfigs = {});
     void startRecording(const std::string& outputPath);
-    
-    // Stop recording
     void stopRecording();
 
 private:
-    void clipBiasValues(std::unordered_map<std::string, int>& biases);
+    void setupDevice(std::unique_ptr<Metavision::Camera>& camera, bool isMaster, const BiasConfig& biases);
+    void setBiases(std::unique_ptr<Metavision::Camera>& camera, const BiasConfig& biases);
+    std::vector<std::string> discoverAvailableCameras();
+    std::vector<CameraConfig> createAutoDiscoveryConfigs();
+    void validateCameraConfigs(const std::vector<CameraConfig>& configs);
+    BiasConfig clipBiasValues(const BiasConfig& biases);
     bool validateBiasLimits(const std::string& biasName, int value);
     
-    // Default bias limits
     static const std::unordered_map<std::string, BiasLimits> DEFAULT_BIAS_LIMITS;
-    
-    std::vector<std::unique_ptr<Metavision::Camera>> m_cameras; // index 0 master, 1 slave
-    
+    static const std::unordered_map<std::string, int> DEFAULT_BIASES;
+
+    std::vector<std::unique_ptr<Metavision::Camera>> m_cameras; // index 0 master, rest slaves
     std::atomic<bool> m_recording;
     std::string m_outputPath;
 };

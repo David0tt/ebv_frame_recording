@@ -39,16 +39,18 @@ find_package(MetavisionSDK REQUIRED COMPONENTS base core stream ui)
 find_package(MetavisionHAL REQUIRED)
 
 
-# Include directories
-include_directories(${CMAKE_SOURCE_DIR}/include)
+# # TODO use target_include_directories instead of include_directories if possible
 
-include_directories(${OpenCV_INCLUDE_DIRS})
+# # Include directories
+# include_directories(${CMAKE_SOURCE_DIR}/include)
 
-include_directories(${IDS_PEAK_INCLUDE_DIR})
+# include_directories(${OpenCV_INCLUDE_DIRS})
 
-include_directories(${IDS_PEAK_IPL_INCLUDE_DIR})
+# include_directories(${IDS_PEAK_INCLUDE_DIR})
 
-include_directories(${METAVISION_INCLUDE_DIR})
+# include_directories(${IDS_PEAK_IPL_INCLUDE_DIR})
+
+# include_directories(${METAVISION_INCLUDE_DIR})
 
 # Source files
 set(SOURCES
@@ -60,6 +62,18 @@ set(SOURCES
 
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES})
+
+set(CLI11_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/CLI11)
+
+target_include_directories(${PROJECT_NAME} PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
+    ${IDS_PEAK_INCLUDE_DIR}
+    ${IDS_PEAK_IPL_INCLUDE_DIR}
+    ${METAVISION_INCLUDE_DIR}
+    ${CLI11_INCLUDE_DIR}
+)
+
 
 # Link libraries
 target_link_libraries(

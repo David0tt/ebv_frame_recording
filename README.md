@@ -133,6 +133,12 @@ ninja
 ```
 
 
+### CLI11
+cd external
+mkdir CLI11
+cd CLI11
+wget https://github.com/CLIUtils/CLI11/releases/download/v2.5.0/CLI11.hpp
+
 
 # Build
 ```
@@ -146,3 +152,13 @@ cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON .. 
 cd /cshome/share/ott/EBV_stuff/ebv_frame_recording/build && ninja
 
 ```
+
+
+
+
+# Testing (TODO only works with connected EBV cameras..., should be automated)
+bin/ebv_frame_recording -s 4108900147 4108900356 --bias_diff_on 1 10 --bias_diff_off 2 20 --bias_fo 3 30 --bias_hpf 4 40 --bias_refr 0 0
+bin/ebv_frame_recording -s 4108900147 # -> should error out due to no second event camera specified
+bin/ebv_frame_recording -s 4108900148 # -> should throw camera not found error
+
+

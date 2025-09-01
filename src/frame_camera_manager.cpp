@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "frame_camera_manager.h"
 #include <iostream>
 #include <stdexcept>
@@ -8,12 +9,13 @@
 
 FrameCameraManager::FrameCameraManager() {
     peak::Library::Initialize();
-    auto peakVersion = peak::Library::Version();
-    std::cout << "Using PEAK SDK version: " << peakVersion.Major() << "." << peakVersion.Minor() << "." << peakVersion.Subminor() << std::endl;
+    const auto peakVersion = peak::Library::Version();
+    std::cout << "Using PEAK SDK version: " << peakVersion.Major() << "." 
+              << peakVersion.Minor() << "." << peakVersion.Subminor() << std::endl;
 }
 
 FrameCameraManager::~FrameCameraManager() {
-    stopAcquisition();
+    stopRecording();
     peak::Library::Close();
 }
 
@@ -29,14 +31,14 @@ void FrameCameraManager::openAndSetupDevices() {
         auto device = deviceDescriptor->OpenDevice(peak::core::DeviceAccessType::Control);
         m_devices.push_back(device);
         setupDevice(device);
-        std::cout << "Set up device with serial number: " << deviceDescriptor->SerialNumber() << std::endl;
+        std::cout << "Set up frame camera with serial number: " << deviceDescriptor->SerialNumber() << std::endl;
     }
 }
 
 void FrameCameraManager::setupDevice(std::shared_ptr<peak::core::Device> device) {
     auto remoteNodemap = device->RemoteDevice()->NodeMaps().at(0);
 
-
+    // Configure camera settings
     remoteNodemap->FindNode<peak::core::nodes::EnumerationNode>("AcquisitionMode")->SetCurrentEntry("Continuous");
     remoteNodemap->FindNode<peak::core::nodes::EnumerationNode>("UserSetSelector")->SetCurrentEntry("Default");
     remoteNodemap->FindNode<peak::core::nodes::CommandNode>("UserSetLoad")->Execute();
@@ -47,12 +49,13 @@ void FrameCameraManager::setupDevice(std::shared_ptr<peak::core::Device> device)
     remoteNodemap->FindNode<peak::core::nodes::EnumerationNode>("TriggerSelector")->SetCurrentEntry("ExposureStart");
     remoteNodemap->FindNode<peak::core::nodes::EnumerationNode>("TriggerMode")->SetCurrentEntry("On");
     remoteNodemap->FindNode<peak::core::nodes::EnumerationNode>("TriggerSource")->SetCurrentEntry("Line0");
+    remoteNodemap->FindNode<peak::core::nodes::IntegerNode>("DeviceLinkThroughputLimit")->SetValue(300000000);
 
     auto dataStream = device->DataStreams().at(0)->OpenDataStream();
     m_dataStreams.push_back(dataStream);
 
-    auto payloadSize = remoteNodemap->FindNode<peak::core::nodes::IntegerNode>("PayloadSize")->Value();
-    auto bufferCountMax = dataStream->NumBuffersAnnouncedMinRequired();
+    const auto payloadSize = remoteNodemap->FindNode<peak::core::nodes::IntegerNode>("PayloadSize")->Value();
+    const auto bufferCountMax = dataStream->NumBuffersAnnouncedMinRequired();
 
     for (size_t i = 0; i < bufferCountMax; ++i) {
         auto buffer = dataStream->AllocAndAnnounceBuffer(static_cast<size_t>(payloadSize), nullptr);
@@ -63,7 +66,7 @@ void FrameCameraManager::setupDevice(std::shared_ptr<peak::core::Device> device)
 }
 
 
-void FrameCameraManager::startAcquisition() {
+void FrameCameraManager::startRecording(const std::string& outputPath) {
     m_acquiring = true;
     m_frames.resize(m_devices.size());
 
@@ -74,12 +77,18 @@ void FrameCameraManager::startAcquisition() {
     }
 
     for (size_t i = 0; i < m_devices.size(); ++i) {
-        m_acquisitionThreads.emplace_back(&FrameCameraManager::acquisitionWorker, this, i);
+        m_acquisitionThreads.emplace_back(&FrameCameraManager::acquisitionWorker, this, i, outputPath);
     }
 }
 
-void FrameCameraManager::stopAcquisition() {
+void FrameCameraManager::stopRecording() {
+    if (!m_acquiring) {
+        return;
+    }
+    
     m_acquiring = false;
+    
+    // Wait for acquisition threads to finish
     for (auto& thread : m_acquisitionThreads) {
         if (thread.joinable()) {
             thread.join();
@@ -87,6 +96,7 @@ void FrameCameraManager::stopAcquisition() {
     }
     m_acquisitionThreads.clear();
 
+    // Stop acquisition for all devices
     for (size_t i = 0; i < m_dataStreams.size(); ++i) {
         try {
             m_devices[i]->RemoteDevice()->NodeMaps()[0]->FindNode<peak::core::nodes::CommandNode>("AcquisitionStop")->Execute();
@@ -104,17 +114,24 @@ void FrameCameraManager::stopAcquisition() {
     }
 }
 
-void FrameCameraManager::acquisitionWorker(int deviceId) {
-    static int frameIndex = 0;
+void FrameCameraManager::acquisitionWorker(int deviceId, const std::string& outputPath) {
+    static std::vector<int> frameIndices(m_devices.size(), 0);
+    std::filesystem::path dirPath(outputPath);
+    dirPath /= "frame_cam" + std::to_string(deviceId);
+    std::filesystem::create_directories(dirPath);
 
     while (m_acquiring) {
         try {
-            auto buffer = m_dataStreams[deviceId]->WaitForFinishedBuffer(5000);
+            auto buffer = m_dataStreams[deviceId]->WaitForFinishedBuffer(1000);
+            
+            if (!m_acquiring) {
+                m_dataStreams[deviceId]->QueueBuffer(buffer);
+                break;
+            }
             
             const auto image = peak::BufferTo<peak::ipl::Image>(buffer).ConvertTo(
                 peak::ipl::PixelFormatName::BGRa8, peak::ipl::ConversionMode::Fast);
 
-            // Showing the image using OpenCV
             cv::Mat cvImage(
                 image.Height(),
                 image.Width(),
@@ -127,11 +144,11 @@ void FrameCameraManager::acquisitionWorker(int deviceId) {
             // cv::imshow(windowName, cvImage);
             // cv::waitKey(1);
 
-            // TODO it has to be made sure, that this file exists
+            // TODO it has to be made sure, that this file path exists
 
-            std::string filename = "./recording/frame_cam" + std::to_string(deviceId) + "_frame_" + std::to_string(frameIndex++) + ".jpg";
+
+            const std::string filename = (dirPath / ("frame_" + std::to_string(frameIndices[deviceId]++) + ".jpg")).string();
             cv::imwrite(filename, cvImage);
-
                     
             m_dataStreams[deviceId]->QueueBuffer(buffer);
         } catch (const std::exception& e) {
@@ -140,14 +157,3 @@ void FrameCameraManager::acquisitionWorker(int deviceId) {
     }
 }
 
-void FrameCameraManager::saveFrames(const std::string& path) {
-    // for (size_t i = 0; i < m_frames.size(); ++i) {
-    //     std::string devicePath = path + "/frame_cam" + std::to_string(i);
-    //     // Create directory, C++17 filesystem would be better
-    //     system(("mkdir -p " + devicePath).c_str());
-    //     for (size_t j = 0; j < m_frames[i].size(); ++j) {
-    //         std::string framePath = devicePath + "/frame_" + std::to_string(j) + ".png";
-    //         cv::imwrite(framePath, m_frames[i][j]);
-    //     }
-    // }
-}
