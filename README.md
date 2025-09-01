@@ -1,5 +1,8 @@
 
-
+# Features
+- Concurrent recording from 2 frame and 2 EBV cameras (tested)
+- Allows setting the biases for the EBV cameras (individually)
+- high-performing concurrent data recording without loosing frames / data (facilitated natively by OpenEB); For frame cameras this is facilitated by using threading, buffering the recorded frames to memory and using diskWriterWorker to write to disk to prevent i/o bound dropping of frames. 
 
 
 # install dependencies
@@ -157,7 +160,7 @@ cd /cshome/share/ott/EBV_stuff/ebv_frame_recording/build && ninja
 
 
 # Testing (TODO only works with connected EBV cameras..., should be automated)
-bin/ebv_frame_recording -s 4108900147 4108900356 --bias_diff_on 1 10 --bias_diff_off 2 20 --bias_fo 3 30 --bias_hpf 4 40 --bias_refr 0 0
+bin/ebv_frame_recording -s 4108900147 4108900356 --bias_diff_on 1 10 --bias_diff_off 2 20 --bias_fo 3 30 --bias_hpf 4 40 --bias_refr 0 0 # -> should load the EV cameras with the bias settings and do a recording
 bin/ebv_frame_recording -s 4108900147 # -> should error out due to no second event camera specified
 bin/ebv_frame_recording -s 4108900148 # -> should throw camera not found error
 

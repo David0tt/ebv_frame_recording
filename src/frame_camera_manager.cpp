@@ -2,6 +2,8 @@
 #include "frame_camera_manager.h"
 #include <iostream>
 #include <stdexcept>
+#include <iomanip>
+#include <chrono>
 #include <peak/peak.hpp>
 #include <peak_ipl/peak_ipl.hpp>
 #include <peak/converters/peak_buffer_converter_ipl.hpp>
@@ -76,8 +78,12 @@ void FrameCameraManager::startRecording(const std::string& outputPath) {
         m_devices[i]->RemoteDevice()->NodeMaps()[0]->FindNode<peak::core::nodes::CommandNode>("AcquisitionStart")->WaitUntilDone();
     }
 
+    // Start the disk writer thread first
+    m_diskWriterThread = std::thread(&FrameCameraManager::diskWriterWorker, this, outputPath);
+
+    // Start acquisition threads (now they only capture, don't write to disk)
     for (size_t i = 0; i < m_devices.size(); ++i) {
-        m_acquisitionThreads.emplace_back(&FrameCameraManager::acquisitionWorker, this, i, outputPath);
+        m_acquisitionThreads.emplace_back(&FrameCameraManager::acquisitionWorker, this, i);
     }
 }
 
@@ -95,6 +101,12 @@ void FrameCameraManager::stopRecording() {
         }
     }
     m_acquisitionThreads.clear();
+
+    // Notify disk writer thread and wait for it to finish
+    m_queueCondition.notify_all();
+    if (m_diskWriterThread.joinable()) {
+        m_diskWriterThread.join();
+    }
 
     // Stop acquisition for all devices
     for (size_t i = 0; i < m_dataStreams.size(); ++i) {
@@ -114,11 +126,13 @@ void FrameCameraManager::stopRecording() {
     }
 }
 
-void FrameCameraManager::acquisitionWorker(int deviceId, const std::string& outputPath) {
+void FrameCameraManager::acquisitionWorker(int deviceId) {
     static std::vector<int> frameIndices(m_devices.size(), 0);
-    std::filesystem::path dirPath(outputPath);
-    dirPath /= "frame_cam" + std::to_string(deviceId);
-    std::filesystem::create_directories(dirPath);
+
+    // FPS tracking variables
+    auto lastFpsReport = std::chrono::steady_clock::now();
+    int framesSinceLastReport = 0;
+    constexpr auto FPS_REPORT_INTERVAL = std::chrono::seconds(1);
 
     while (m_acquiring) {
         try {
@@ -140,20 +154,91 @@ void FrameCameraManager::acquisitionWorker(int deviceId, const std::string& outp
                 image.Width() * 4 // BGRa8 is 4 bytes per pixel
             );
 
-            // std::string windowName = "Frame Camera " + std::to_string(deviceId);
-            // cv::imshow(windowName, cvImage);
-            // cv::waitKey(1);
+            // Create frame data and add to queue (non-blocking)
+            FrameData frameData;
+            frameData.image = cvImage.clone(); // Important: clone to create independent copy
+            frameData.deviceId = deviceId;
+            frameData.frameIndex = frameIndices[deviceId]++;
+            frameData.timestamp = std::chrono::steady_clock::now();
 
-            // TODO it has to be made sure, that this file path exists
-
-
-            const std::string filename = (dirPath / ("frame_" + std::to_string(frameIndices[deviceId]++) + ".jpg")).string();
-            cv::imwrite(filename, cvImage);
+            // Add frame to queue (with queue size limiting)
+            {
+                std::unique_lock<std::mutex> lock(m_queueMutex);
+                if (m_frameQueue.size() < MAX_QUEUE_SIZE) {
+                    m_frameQueue.push(std::move(frameData));
+                    m_queueCondition.notify_one();
+                } else {
+                    // Queue is full, drop oldest frame to make space
+                    std::cerr << "Warning: Frame queue full for device " << deviceId 
+                             << ", dropping oldest frame" << std::endl;
+                    m_frameQueue.pop();
+                    m_frameQueue.push(std::move(frameData));
+                    m_queueCondition.notify_one();
+                }
+            }
+            
+            // Update FPS tracking
+            framesSinceLastReport++;
+            auto currentTime = std::chrono::steady_clock::now();
+            auto timeSinceLastReport = currentTime - lastFpsReport;
+            
+            if (timeSinceLastReport >= FPS_REPORT_INTERVAL) {
+                double elapsed_seconds = std::chrono::duration<double>(timeSinceLastReport).count();
+                double fps = framesSinceLastReport / elapsed_seconds;
+                std::cout << "Frame Camera " << deviceId << " FPS: " << std::fixed << std::setprecision(2) 
+                         << fps << " (frames: " << framesSinceLastReport << " in " 
+                         << std::setprecision(1) << elapsed_seconds << "s)" << std::endl;
+                
+                // Reset counters
+                lastFpsReport = currentTime;
+                framesSinceLastReport = 0;
+            }
                     
             m_dataStreams[deviceId]->QueueBuffer(buffer);
         } catch (const std::exception& e) {
             std::cerr << "Acquisition error on device " << deviceId << ": " << e.what() << std::endl;
         }
     }
+}
+
+void FrameCameraManager::diskWriterWorker(const std::string& outputPath) {
+    // Create output directories for each camera
+    std::vector<std::filesystem::path> cameraDirs(m_devices.size());
+    for (size_t i = 0; i < m_devices.size(); ++i) {
+        cameraDirs[i] = std::filesystem::path(outputPath) / ("frame_cam" + std::to_string(i));
+        std::filesystem::create_directories(cameraDirs[i]);
+    }
+
+    std::cout << "Disk writer thread started" << std::endl;
+
+    while (m_acquiring || !m_frameQueue.empty()) {
+        std::unique_lock<std::mutex> lock(m_queueMutex);
+        
+        // Wait for frames or stop signal
+        m_queueCondition.wait(lock, [this] { 
+            return !m_frameQueue.empty() || !m_acquiring; 
+        });
+
+        // Process all available frames
+        while (!m_frameQueue.empty()) {
+            FrameData frameData = std::move(m_frameQueue.front());
+            m_frameQueue.pop();
+            lock.unlock(); // Release lock while doing I/O
+
+            try {
+                // Write frame to disk
+                const std::string filename = (cameraDirs[frameData.deviceId] / 
+                    ("frame_" + std::to_string(frameData.frameIndex) + ".jpg")).string();
+                cv::imwrite(filename, frameData.image);
+            } catch (const std::exception& e) {
+                std::cerr << "Error writing frame for device " << frameData.deviceId 
+                         << ", frame " << frameData.frameIndex << ": " << e.what() << std::endl;
+            }
+
+            lock.lock(); // Reacquire lock for next iteration
+        }
+    }
+
+    std::cout << "Disk writer thread finished" << std::endl;
 }
 
