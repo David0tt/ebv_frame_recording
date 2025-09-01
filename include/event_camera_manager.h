@@ -30,7 +30,7 @@ public:
     // NOTE: This code is in principle compatible with an arbitrary number of event cameras,
     // but it has only been tested for two cameras
     void openAndSetupDevices(const std::vector<CameraConfig>& cameraConfigs = {});
-    void startRecording(const std::string& outputPath);
+    void startRecording(const std::string& outputPath, const std::string& fileFormat = "hdf5");
     void stopRecording();
 
 private:

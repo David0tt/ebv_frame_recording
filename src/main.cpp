@@ -25,7 +25,8 @@ int main(int argc, char** argv) {
     CLI::App app{"EBV and Frame Camera Recording System"};
     app.footer(
         "- IMPORTANT: For proper synchronization, ensure all cameras are connected via their GPIO ports and triggered by an external signal generator as specified in the project documentation. Without this setup, frame cameras will not record frames, and event cameras will not include trigger events in their data stream.\n"
-        "- The lengths of all the bias settings and serial numbers have to be equal, the i-th bias setting corresponds to the i-th serial number."
+        "- The lengths of all the bias settings and serial numbers have to be equal, the i-th bias setting corresponds to the i-th serial number.\n"
+        "- Event data can be saved in either 'raw' or 'hdf5' format. HDF5 format is recommended for better compression and metadata support."
     );
 
     std::vector<std::string> serials;
@@ -37,6 +38,9 @@ int main(int argc, char** argv) {
     int recording_length = -1;
     app.add_option("-l,--length", recording_length, "Length of the recording in seconds. -1 for indefinite recording.");
 
+    std::string event_file_format = "hdf5";
+    app.add_option("-f,--format", event_file_format, "File format for event data recording (raw or hdf5). Default: hdf5");
+
     std::unordered_map<std::string, std::vector<int>> biases;
     app.add_option("--bias_diff_on", biases["bias_diff_on"], "bias_diff_on values");
     app.add_option("--bias_diff_off", biases["bias_diff_off"], "bias_diff_off values");
@@ -46,7 +50,15 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(app, argc, argv);
 
+    // Validate event file format
+    if (event_file_format != "raw" && event_file_format != "hdf5") {
+        std::cerr << "Error: Invalid event file format '" << event_file_format 
+                  << "'. Supported formats are 'raw' and 'hdf5'." << std::endl;
+        return 1;
+    }
+
     std::cout << "Starting EBV and Frame Camera Recording System" << std::endl;
+    std::cout << "Event data will be saved in " << event_file_format << " format" << std::endl;
 
     // // Camera configuration
     // constexpr auto EBV_SERIAL_NUMBER0 = "4108900147";  // Master
@@ -119,7 +131,7 @@ int main(int argc, char** argv) {
         eventCameraManager.openAndSetupDevices(cameraConfigs);
 
         std::cout << "Starting recording to: " << outputDir << std::endl;
-        eventCameraManager.startRecording(outputDir);
+        eventCameraManager.startRecording(outputDir, event_file_format);
         frameCameraManager.startRecording(outputDir);
 
         if (recording_length > 0) {
