@@ -149,9 +149,14 @@ void EventCameraManager::setBiases(std::unique_ptr<Metavision::Camera>& camera, 
     }
 }
 
-void EventCameraManager::startRecording(const std::string& outputPath) {
+void EventCameraManager::startRecording(const std::string& outputPath, const std::string& fileFormat) {
     if (m_cameras.empty()) {
         throw std::runtime_error("Cameras must be opened before starting recording");
+    }
+
+    // Validate file format
+    if (fileFormat != "raw" && fileFormat != "hdf5") {
+        throw std::runtime_error("Invalid file format: " + fileFormat + ". Supported formats are 'raw' and 'hdf5'");
     }
 
     m_outputPath = outputPath;
@@ -160,7 +165,7 @@ void EventCameraManager::startRecording(const std::string& outputPath) {
     try {
         // Start recording and cameras
         for (size_t i = 0; i < m_cameras.size(); ++i) {
-            const std::string filename = outputPath + "/ebv_cam_" + std::to_string(i) + ".raw";
+            const std::string filename = outputPath + "/ebv_cam_" + std::to_string(i) + "." + fileFormat;
             const std::string cameraType = (i == 0) ? "master" : "slave";
             
             if (!m_cameras[i]->start_recording(filename)) {
@@ -177,7 +182,7 @@ void EventCameraManager::startRecording(const std::string& outputPath) {
         }
 
         m_recording = true;
-        std::cout << "Event camera recording started successfully for " << m_cameras.size() << " cameras" << std::endl;
+        std::cout << "Event camera recording started successfully for " << m_cameras.size() << " cameras in " << fileFormat << " format" << std::endl;
 
     } catch (const Metavision::CameraException& e) {
         throw std::runtime_error("Failed to start recording: " + std::string(e.what()));

@@ -11,6 +11,11 @@ project(
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Enable Qt's automoc for any Qt based executables we add (mockup player)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
+
 # Add compiler flags for optimization
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native")
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra")
@@ -94,6 +99,36 @@ target_link_libraries(
 
 # Set output directory
 set_target_properties(${PROJECT_NAME} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# --------------------------------------------------------------------------------------------------
+# Mockup video player (Qt Widgets) providing required 2x2 layout + play bar + transport controls
+# This is a standalone mockup UI (no real data wiring yet)
+# --------------------------------------------------------------------------------------------------
+
+# Try Qt6 first, fall back to Qt5 (Metavision UI today often still uses Qt5)
+find_package(Qt6 COMPONENTS Widgets REQUIRED)
+set(QT_WIDGETS_LIB Qt6::Widgets)
+
+
+# find_package(Qt6 COMPONENTS Widgets QUIET)
+# if (Qt6_FOUND)
+#     message(STATUS "Configuring mockup player with Qt6")
+#     set(QT_WIDGETS_LIB Qt6::Widgets)
+# else()
+#     find_package(Qt5 COMPONENTS Widgets REQUIRED)
+#     message(STATUS "Configuring mockup player with Qt5")
+#     set(QT_WIDGETS_LIB Qt5::Widgets)
+# endif()
+
+add_executable(video_player_mockup
+    src/video_player_mockup.cpp
+)
+
+target_link_libraries(video_player_mockup PRIVATE ${QT_WIDGETS_LIB})
+
+set_target_properties(video_player_mockup PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 

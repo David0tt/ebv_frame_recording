@@ -143,6 +143,10 @@ cd CLI11
 wget https://github.com/CLIUtils/CLI11/releases/download/v2.5.0/CLI11.hpp
 
 
+
+# Qt6
+sudo apt install qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools
+
 # Build
 ```
 cd build
