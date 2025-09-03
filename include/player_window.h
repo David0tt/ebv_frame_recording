@@ -12,6 +12,7 @@
 
 #include <opencv2/opencv.hpp>
 #include "recording_data_loader.h"
+#include "cached_timeline_slider.h"
 
 #include <vector>
 #include <atomic>
@@ -42,15 +43,17 @@ private slots:
 private:
     void updateDisplays();
     void updateStatus();
+    void updateCachedFrames();
     QString formatTime(double seconds) const;
 
     QPushButton *m_openButton {nullptr};
     QLabel *m_pathLabel {nullptr};
-    QSlider *m_timelineSlider {nullptr};
+    CachedTimelineSlider *m_timelineSlider {nullptr};
     QPushButton *m_btnBack {nullptr};
     QPushButton *m_btnPlay {nullptr};
     QPushButton *m_btnFwd {nullptr};
     QTimer m_timer;
+    QTimer m_cacheUpdateTimer;
     QString m_loadedDir;
     std::vector<Pane> m_panes;
     QLabel *m_statusLabel {nullptr};

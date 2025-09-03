@@ -84,7 +84,7 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     rootLayout->addLayout(grid, 1);
 
     // Timeline slider
-    m_timelineSlider = new QSlider(Qt::Horizontal);
+    m_timelineSlider = new CachedTimelineSlider(Qt::Horizontal);
     m_timelineSlider->setRange(0, 1000);
     m_timelineSlider->setSingleStep(1);
     m_timelineSlider->setPageStep(25);
@@ -128,6 +128,11 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
         }
     });
 
+    // Timer for updating cached frame display
+    m_cacheUpdateTimer.setInterval(500); // Update every 500ms
+    connect(&m_cacheUpdateTimer, &QTimer::timeout, this, &PlayerWindow::updateCachedFrames);
+    m_cacheUpdateTimer.start();
+
     connect(m_btnPlay, &QPushButton::clicked, this, [this]{
         if (m_timer.isActive()) { m_timer.stop(); m_btnPlay->setText("Play"); }
         else { m_timer.start(); m_btnPlay->setText("Pause"); }
@@ -146,6 +151,10 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     connect(m_timelineSlider, &QSlider::valueChanged, this, [this](int v){
         if (!m_dataLoader->isDataReady()) return;
         m_currentIndex = v;
+        
+        // Notify event camera loaders about frame change for prefetching
+        m_dataLoader->notifyFrameChanged(v);
+        
         updateDisplays();
         updateStatus();
     });
@@ -172,6 +181,7 @@ void PlayerWindow::loadRecording(const QString &dirPath) {
     m_loadedDir = dirPath;
     m_currentIndex = 0;
     m_timelineSlider->setValue(0);
+    m_timelineSlider->clearCachedFrames(); // Clear cache display for new recording
 
     // Clear panes
     for (auto &p : m_panes) {
@@ -276,4 +286,16 @@ void PlayerWindow::updateStatus() {
             .arg(formatTime(curTime))
             .arg(formatTime(totTime)));
     }
+}
+
+void PlayerWindow::updateCachedFrames() {
+    if (!m_dataLoader->isDataReady()) {
+        return;
+    }
+    
+    // Get all cached frame indices from the data loader
+    QSet<int> cachedFrames = m_dataLoader->getAllCachedFrames();
+    
+    // Update the timeline slider with cached frame information
+    m_timelineSlider->setCachedFrames(cachedFrames);
 }

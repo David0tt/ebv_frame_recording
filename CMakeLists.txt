@@ -133,8 +133,10 @@ add_executable(video_player
     src/video_player.cpp
     src/player_window.cpp
     src/recording_data_loader.cpp
+    src/cached_timeline_slider.cpp
     include/player_window.h
     include/recording_data_loader.h
+    include/cached_timeline_slider.h
 )
 
 target_include_directories(video_player PRIVATE 

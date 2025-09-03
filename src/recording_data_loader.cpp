@@ -50,9 +50,19 @@ long long extract_frame_index(const std::string &pathStr) {
 EventCameraLoader::EventCameraLoader(const std::string &filePath) 
     : m_filePath(filePath) {
     initialize();
+    
+    // Start prefetch thread
+    m_prefetchThread = std::thread(&EventCameraLoader::prefetchThreadMain, this);
 }
 
-EventCameraLoader::~EventCameraLoader() = default;
+EventCameraLoader::~EventCameraLoader() {
+    // Stop prefetch thread
+    m_stopPrefetch = true;
+    m_prefetchCv.notify_all();
+    if (m_prefetchThread.joinable()) {
+        m_prefetchThread.join();
+    }
+}
 
 void EventCameraLoader::initialize() {
     try {
@@ -203,6 +213,91 @@ QImage EventCameraLoader::generateFrameFromEvents(const std::vector<Metavision::
     return cvMatToQImage(frame);
 }
 
+QSet<int> EventCameraLoader::getCachedFrames() const {
+    std::lock_guard<std::mutex> lock(m_frameMutex);
+    QSet<int> cachedIndices;
+    
+    for (const auto &pair : m_frameCache) {
+        cachedIndices.insert(static_cast<int>(pair.first));
+    }
+    
+    return cachedIndices;
+}
+
+void EventCameraLoader::setCurrentFrameIndex(size_t frameIndex) {
+    m_currentFrameIndex = frameIndex;
+    requestPrefetch();
+}
+
+void EventCameraLoader::setPlaybackFps(double fps) {
+    m_fps = fps;
+}
+
+void EventCameraLoader::requestPrefetch() {
+    {
+        std::lock_guard<std::mutex> lock(m_prefetchMutex);
+        m_prefetchDirty = true;
+    }
+    m_prefetchCv.notify_one();
+}
+
+void EventCameraLoader::prefetchThreadMain() {
+    while (!m_stopPrefetch) {
+        std::unique_lock<std::mutex> lock(m_prefetchMutex);
+        
+        // Wait for prefetch request or stop signal
+        m_prefetchCv.wait(lock, [this] { return m_prefetchDirty || m_stopPrefetch; });
+        
+        if (m_stopPrefetch) break;
+        
+        m_prefetchDirty = false;
+        lock.unlock();
+        
+        // Get current frame index
+        size_t currentFrame = m_currentFrameIndex.load();
+        double fps = m_fps.load();
+        
+        // Prefetch ahead frames
+        for (size_t i = 1; i <= PREFETCH_AHEAD_FRAMES; ++i) {
+            if (m_stopPrefetch) break;
+            
+            size_t frameIndex = currentFrame + i;
+            if (frameIndex >= m_estimatedFrameCount) break;
+            
+            // Check if frame is already cached
+            {
+                std::lock_guard<std::mutex> cacheLock(m_frameMutex);
+                if (m_frameCache.find(frameIndex) != m_frameCache.end()) {
+                    continue; // Already cached
+                }
+            }
+            
+            // Generate frame in background
+            try {
+                QImage frame = generateFrameFromTimeRange(
+                    frameIndex * static_cast<Metavision::timestamp>(1000000.0 / fps),
+                    (frameIndex + 1) * static_cast<Metavision::timestamp>(1000000.0 / fps)
+                );
+                
+                // Cache the frame
+                {
+                    std::lock_guard<std::mutex> cacheLock(m_frameMutex);
+                    if (m_frameCache.size() < MAX_CACHE_SIZE) {
+                        m_frameCache[frameIndex] = frame;
+                    }
+                }
+                
+                // Small delay to prevent overwhelming the system
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                
+            } catch (const std::exception &e) {
+                std::cout << "Prefetch error for frame " << frameIndex << ": " << e.what() << std::endl;
+                break; // Stop prefetching on error
+            }
+        }
+    }
+}
+
 // RecordingDataLoader implementation
 RecordingDataLoader::RecordingDataLoader(QObject *parent) : QObject(parent) {
 }
@@ -255,6 +350,41 @@ QImage RecordingDataLoader::getEventCameraFrame(int camera, size_t frameIndex) c
     
     // Use lazy loading - generate frame on demand
     return eventCam.loader->getFrame(frameIndex);
+}
+
+QSet<int> RecordingDataLoader::getCachedEventFrames(int camera) const {
+    if (!m_dataReady.load() || camera < 0 || camera >= static_cast<int>(m_data.eventCams.size())) {
+        return {};
+    }
+    const auto &eventCam = m_data.eventCams[camera];
+    if (!eventCam.loader || !eventCam.isValid) {
+        return {};
+    }
+    return eventCam.loader->getCachedFrames();
+}
+
+QSet<int> RecordingDataLoader::getAllCachedFrames() const {
+    QSet<int> allCached;
+    
+    // Only show event camera cached frames since that's where the expensive processing happens
+    // Frame cameras are just file reads and don't need caching visualization
+    for (size_t cam = 0; cam < m_data.eventCams.size(); ++cam) {
+        QSet<int> eventCached = getCachedEventFrames(static_cast<int>(cam));
+        allCached.unite(eventCached);
+    }
+    
+    return allCached;
+}
+
+void RecordingDataLoader::notifyFrameChanged(size_t frameIndex) {
+    if (!m_dataReady.load()) return;
+    
+    // Notify all event camera loaders about the frame change for prefetching
+    for (auto &eventCam : m_data.eventCams) {
+        if (eventCam.loader && eventCam.isValid) {
+            eventCam.loader->setCurrentFrameIndex(frameIndex);
+        }
+    }
 }
 
 void RecordingDataLoader::loadDataWorker(const std::string &dirPath) {

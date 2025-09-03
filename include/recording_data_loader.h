@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QImage>
+#include <QSet>
 #include <opencv2/opencv.hpp>
 #include <metavision/sdk/stream/camera.h>
 #include <metavision/sdk/core/utils/cd_frame_generator.h>
@@ -57,6 +58,9 @@ public:
     size_t getEstimatedFrameCount() const { return m_estimatedFrameCount; }
     bool isValid() const { return m_isValid; }
     
+    // Get cached frame indices
+    QSet<int> getCachedFrames() const;
+    
 private:
     void initialize();
     QImage generateFrameFromTimeRange(Metavision::timestamp startTime, Metavision::timestamp endTime);
@@ -73,7 +77,7 @@ private:
     
     // Frame cache only (no event pre-loading)
     std::unordered_map<size_t, QImage> m_frameCache;
-    std::mutex m_frameMutex;
+    mutable std::mutex m_frameMutex;
     static const size_t MAX_CACHE_SIZE = 10000;
     static const size_t PREFETCH_AHEAD_FRAMES = MAX_CACHE_SIZE / 2; // how many future frames to pre-generate
 
@@ -114,6 +118,13 @@ public:
     // Frame access helpers
     cv::Mat getFrameCameraFrame(int camera, size_t frameIndex) const;
     QImage getEventCameraFrame(int camera, size_t frameIndex) const;
+    
+    // Cache information helpers
+    QSet<int> getCachedEventFrames(int camera) const;
+    QSet<int> getAllCachedFrames() const;
+    
+    // Prefetch control
+    void notifyFrameChanged(size_t frameIndex);
 
 signals:
     void loadingStarted(const QString &path);
