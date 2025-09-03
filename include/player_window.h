@@ -16,6 +16,7 @@
 
 #include <vector>
 #include <atomic>
+#include <chrono>
 
 struct Pane {
     QFrame *frame {nullptr};
@@ -44,6 +45,7 @@ private:
     void updateDisplays();
     void updateStatus();
     void updateCachedFrames();
+    void updateFPS(size_t currentFrame);
     QString formatTime(double seconds) const;
 
     QPushButton *m_openButton {nullptr};
@@ -57,12 +59,19 @@ private:
     QString m_loadedDir;
     std::vector<Pane> m_panes;
     QLabel *m_statusLabel {nullptr};
+    QLabel *m_fpsLabel {nullptr};
     
     // Data loader
     RecordingDataLoader *m_dataLoader {nullptr};
     
     std::atomic<size_t> m_currentIndex {0};
     double m_assumedFps {30.0};
+    
+    // FPS tracking
+    std::chrono::steady_clock::time_point m_lastFrameTime;
+    size_t m_lastFrameIndex{0};
+    double m_currentFps{0.0};
+    static constexpr double FPS_SMOOTHING = 0.8; // Exponential smoothing factor
 };
 
 // Utility functions

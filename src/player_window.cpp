@@ -102,6 +102,12 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     m_statusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_statusLabel->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
 
+    // FPS counter label
+    m_fpsLabel = new QLabel("FPS: 0.0");
+    m_fpsLabel->setFont(mono);
+    m_fpsLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_fpsLabel->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
+
     // Left stretch
     controlsLayout->addStretch(1);
     // Center button cluster
@@ -111,9 +117,11 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     buttonCluster->addWidget(m_btnPlay);
     buttonCluster->addWidget(m_btnFwd);
     controlsLayout->addLayout(buttonCluster);
-    // Right stretch then status label
+    // Right stretch then status label and FPS
     controlsLayout->addStretch(1);
     controlsLayout->addWidget(m_statusLabel, 0, Qt::AlignRight);
+    controlsLayout->addSpacing(12);
+    controlsLayout->addWidget(m_fpsLabel, 0, Qt::AlignRight);
     rootLayout->addLayout(controlsLayout);
 
     // Timer for mock playback
@@ -133,6 +141,9 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     connect(&m_cacheUpdateTimer, &QTimer::timeout, this, &PlayerWindow::updateCachedFrames);
     m_cacheUpdateTimer.start();
 
+    // Initialize FPS tracking
+    m_lastFrameTime = std::chrono::steady_clock::now();
+
     connect(m_btnPlay, &QPushButton::clicked, this, [this]{
         if (m_timer.isActive()) { m_timer.stop(); m_btnPlay->setText("Play"); }
         else { m_timer.start(); m_btnPlay->setText("Pause"); }
@@ -150,6 +161,10 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
 
     connect(m_timelineSlider, &QSlider::valueChanged, this, [this](int v){
         if (!m_dataLoader->isDataReady()) return;
+        
+        // Update FPS calculation
+        updateFPS(v);
+        
         m_currentIndex = v;
         
         // Notify event camera loaders about frame change for prefetching
@@ -182,6 +197,14 @@ void PlayerWindow::loadRecording(const QString &dirPath) {
     m_currentIndex = 0;
     m_timelineSlider->setValue(0);
     m_timelineSlider->clearCachedFrames(); // Clear cache display for new recording
+
+    // Reset FPS tracking
+    m_currentFps = 0.0;
+    m_lastFrameIndex = 0;
+    m_lastFrameTime = std::chrono::steady_clock::now();
+    if (m_fpsLabel) {
+        m_fpsLabel->setText("FPS: 0.0");
+    }
 
     // Clear panes
     for (auto &p : m_panes) {
@@ -302,4 +325,36 @@ void PlayerWindow::updateCachedFrames() {
     
     // Update the timeline slider with cached frame information
     m_timelineSlider->setCachedFrames(cachedFrames);
+}
+
+void PlayerWindow::updateFPS(size_t currentFrame) {
+    auto now = std::chrono::steady_clock::now();
+    
+    // Calculate time difference since last frame change
+    auto timeDiff = std::chrono::duration_cast<std::chrono::microseconds>(now - m_lastFrameTime);
+    double deltaTime = timeDiff.count() / 1000000.0; // Convert to seconds
+    
+    // Calculate frame difference
+    long long frameDiff = static_cast<long long>(currentFrame) - static_cast<long long>(m_lastFrameIndex);
+    
+    // Only calculate FPS for meaningful changes (avoid division by zero and very small time differences)
+    if (deltaTime > 0.01 && abs(frameDiff) > 0) { // At least 10ms and at least 1 frame
+        double instantFps = abs(frameDiff) / deltaTime;
+        
+        // Apply exponential smoothing to reduce jitter
+        if (m_currentFps == 0.0) {
+            m_currentFps = instantFps; // First measurement
+        } else {
+            m_currentFps = FPS_SMOOTHING * m_currentFps + (1.0 - FPS_SMOOTHING) * instantFps;
+        }
+        
+        // Update FPS display
+        if (m_fpsLabel) {
+            m_fpsLabel->setText(QString("FPS: %1").arg(m_currentFps, 0, 'f', 1));
+        }
+    }
+    
+    // Update tracking variables
+    m_lastFrameTime = now;
+    m_lastFrameIndex = currentFrame;
 }
