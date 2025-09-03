@@ -58,19 +58,26 @@ find_package(MetavisionHAL REQUIRED)
 # include_directories(${METAVISION_INCLUDE_DIR})
 
 # Source files
-set(SOURCES
-    src/main.cpp
+# set(SOURCES
+#     src/ebv_frame_recording.cpp
+#     src/frame_camera_manager.cpp
+#     src/event_camera_manager.cpp
+#     src/utils.cpp
+# )
+
+# Create executable
+add_executable(ebv_frame_recording
+    src/ebv_frame_recording.cpp
     src/frame_camera_manager.cpp
     src/event_camera_manager.cpp
     src/utils.cpp
 )
 
-# Create executable
-add_executable(${PROJECT_NAME} ${SOURCES})
+# add_executable(ebv_frame_recording ${SOURCES})
 
 set(CLI11_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/CLI11)
 
-target_include_directories(${PROJECT_NAME} PRIVATE 
+target_include_directories(ebv_frame_recording PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
     ${IDS_PEAK_INCLUDE_DIR}
@@ -82,7 +89,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 # Link libraries
 target_link_libraries(
-    ${PROJECT_NAME} PRIVATE
+    ebv_frame_recording PRIVATE
     Threads::Threads
     ids_peak
     ids_peak_ipl
@@ -98,7 +105,7 @@ target_link_libraries(
 
 
 # Set output directory
-set_target_properties(${PROJECT_NAME} PROPERTIES
+set_target_properties(ebv_frame_recording PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -122,11 +129,11 @@ set(QT_WIDGETS_LIB Qt6::Widgets)
 #     set(QT_WIDGETS_LIB Qt5::Widgets)
 # endif()
 
-add_executable(video_player_mockup
+add_executable(video_player
     src/video_player_mockup.cpp
 )
 
-target_link_libraries(video_player_mockup PRIVATE 
+target_link_libraries(video_player PRIVATE 
     ${QT_WIDGETS_LIB}
     ${OpenCV_LIBS}
     Threads::Threads
@@ -137,7 +144,7 @@ target_link_libraries(video_player_mockup PRIVATE
     Metavision::HAL
 )
 
-set_target_properties(video_player_mockup PROPERTIES
+set_target_properties(video_player PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
