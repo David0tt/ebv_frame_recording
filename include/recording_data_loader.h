@@ -89,6 +89,7 @@ private:
     std::mutex m_prefetchMutex;
     std::condition_variable m_prefetchCv;
     bool m_prefetchDirty{false};
+    bool m_prefetchRestart{false};
 };
 
 struct RecordingData {

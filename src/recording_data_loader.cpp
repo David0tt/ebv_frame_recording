@@ -225,8 +225,21 @@ QSet<int> EventCameraLoader::getCachedFrames() const {
 }
 
 void EventCameraLoader::setCurrentFrameIndex(size_t frameIndex) {
-    m_currentFrameIndex = frameIndex;
-    requestPrefetch();
+    size_t oldFrame = m_currentFrameIndex.exchange(frameIndex);
+    
+    // If we jumped significantly (more than a few frames), interrupt current prefetching
+    if (abs(static_cast<long long>(frameIndex) - static_cast<long long>(oldFrame)) > 10) {
+        // Signal the prefetch thread to restart from new position
+        {
+            std::lock_guard<std::mutex> lock(m_prefetchMutex);
+            m_prefetchRestart = true;
+            m_prefetchDirty = true;
+        }
+        m_prefetchCv.notify_one();
+    } else {
+        // Small change, just update normally
+        requestPrefetch();
+    }
 }
 
 void EventCameraLoader::setPlaybackFps(double fps) {
@@ -250,16 +263,45 @@ void EventCameraLoader::prefetchThreadMain() {
         
         if (m_stopPrefetch) break;
         
+        bool shouldRestart = m_prefetchRestart;
         m_prefetchDirty = false;
+        m_prefetchRestart = false;
         lock.unlock();
         
         // Get current frame index
         size_t currentFrame = m_currentFrameIndex.load();
         double fps = m_fps.load();
         
+        // If restarting, we might want to clear some cache entries that are far from current position
+        if (shouldRestart) {
+            std::lock_guard<std::mutex> cacheLock(m_frameMutex);
+            // Remove cache entries that are too far from current position to make room
+            auto it = m_frameCache.begin();
+            while (it != m_frameCache.end()) {
+                size_t cachedFrame = it->first;
+                // Keep frames within a reasonable range around current position
+                if (cachedFrame < currentFrame && (currentFrame - cachedFrame) > PREFETCH_AHEAD_FRAMES) {
+                    it = m_frameCache.erase(it);
+                } else if (cachedFrame > currentFrame && (cachedFrame - currentFrame) > PREFETCH_AHEAD_FRAMES * 2) {
+                    it = m_frameCache.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        
         // Prefetch ahead frames
         for (size_t i = 1; i <= PREFETCH_AHEAD_FRAMES; ++i) {
             if (m_stopPrefetch) break;
+            
+            // Check if we got a restart request during prefetching
+            {
+                std::lock_guard<std::mutex> restartLock(m_prefetchMutex);
+                if (m_prefetchRestart) {
+                    // Restart requested, break out of current prefetch loop
+                    break;
+                }
+            }
             
             size_t frameIndex = currentFrame + i;
             if (frameIndex >= m_estimatedFrameCount) break;

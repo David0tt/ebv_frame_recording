@@ -209,6 +209,10 @@ void PlayerWindow::onLoadingFinished(bool success, const QString &message) {
     if (success) {
         const auto &data = m_dataLoader->getData();
         m_timelineSlider->setRange(0, static_cast<int>(data.totalFrames - 1));
+        
+        // Start prefetching from frame 0
+        m_dataLoader->notifyFrameChanged(0);
+        
         updateDisplays();
     } else {
         for (auto &p : m_panes) {
