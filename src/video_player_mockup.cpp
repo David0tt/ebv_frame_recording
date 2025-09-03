@@ -110,6 +110,22 @@ struct EventCameraData {
     std::vector<QImage> frames;
 };
 
+// Helper: extract numeric frame index from filename like ".../frame_123.jpg"; fallback -1
+static long long extract_frame_index(const std::string &pathStr) {
+    auto filenamePos = pathStr.find_last_of("/\\");
+    std::string name = (filenamePos==std::string::npos)? pathStr : pathStr.substr(filenamePos+1);
+    auto dotPos = name.find_last_of('.');
+    if (dotPos != std::string::npos) name = name.substr(0, dotPos);
+    // Find last contiguous digit run
+    int i = static_cast<int>(name.size()) - 1;
+    while (i >= 0 && !std::isdigit(static_cast<unsigned char>(name[i]))) --i;
+    if (i < 0) return -1;
+    int end = i;
+    while (i >= 0 && std::isdigit(static_cast<unsigned char>(name[i]))) --i;
+    std::string num = name.substr(i + 1, end - i);
+    try { return std::stoll(num); } catch (...) { return -1; }
+}
+
 class PlayerWindow : public QWidget {
     Q_OBJECT
 public:
@@ -154,17 +170,31 @@ public:
         m_timelineSlider->setPageStep(25);
         rootLayout->addWidget(m_timelineSlider);
 
-        // Transport controls
-        auto *controlsLayout = new QHBoxLayout();
-        m_btnBack = new QPushButton("<<");
-        m_btnPlay = new QPushButton("Play");
-        m_btnFwd = new QPushButton(">>");
-        controlsLayout->addSpacerItem(new QSpacerItem(20, 10, QSizePolicy::Expanding, QSizePolicy::Minimum));
-        controlsLayout->addWidget(m_btnBack);
-        controlsLayout->addWidget(m_btnPlay);
-        controlsLayout->addWidget(m_btnFwd);
-        controlsLayout->addSpacerItem(new QSpacerItem(20, 10, QSizePolicy::Expanding, QSizePolicy::Minimum));
-        rootLayout->addLayout(controlsLayout);
+    // Transport controls + status (buttons centered, status bottom-right)
+    auto *controlsLayout = new QHBoxLayout();
+    m_btnBack = new QPushButton("<<");
+    m_btnPlay = new QPushButton("Play");
+    m_btnFwd = new QPushButton(">>");
+    m_statusLabel = new QLabel("Frame 0 / 0    00:00.000 / 00:00.000");
+    QFont mono = m_statusLabel->font();
+    mono.setFamily("Monospace");
+    m_statusLabel->setFont(mono);
+    m_statusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_statusLabel->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
+
+    // Left stretch
+    controlsLayout->addStretch(1);
+    // Center button cluster
+    auto *buttonCluster = new QHBoxLayout();
+    buttonCluster->setSpacing(8);
+    buttonCluster->addWidget(m_btnBack);
+    buttonCluster->addWidget(m_btnPlay);
+    buttonCluster->addWidget(m_btnFwd);
+    controlsLayout->addLayout(buttonCluster);
+    // Right stretch then status label
+    controlsLayout->addStretch(1);
+    controlsLayout->addWidget(m_statusLabel, 0, Qt::AlignRight);
+    rootLayout->addLayout(controlsLayout);
 
         // Timer for mock playback
         m_timer.setInterval(30);
@@ -197,6 +227,7 @@ public:
             if (!m_dataReady.load()) return;
             m_currentIndex = v;
             updateDisplays();
+            updateStatus();
         });
     }
 
@@ -230,6 +261,7 @@ public:
         for (auto &p : m_panes) p.content->setText("Loading...");
 
         m_loaderThread = std::thread([this, path = dirPath.toStdString()](){ this->loadDataWorker(path); });
+    updateStatus();
     }
 
     void autoLoadIfProvided(const QString &dirPath) {
@@ -256,8 +288,21 @@ private:
                             }
                         }
                     }
-                    std::sort(fcd.image_files.begin(), fcd.image_files.end());
+                    // TODO hacky solution to sort by number in file name
+                    std::sort(fcd.image_files.begin(), fcd.image_files.end(), [](const std::string &a, const std::string &b){
+                        long long ia = extract_frame_index(a);
+                        long long ib = extract_frame_index(b);
+                        if (ia == -1 || ib == -1) return a < b; // fallback
+                        if (ia != ib) return ia < ib;
+                        return a < b; // stable tie-break
+                    });
                 }
+
+                // Debug
+                for (const auto &fname : fcd.image_files) {
+                    std::cout << "FrameCam" << cam << ":" << fname << std::endl;
+                }
+
                 m_frameCams.push_back(std::move(fcd));
             }
 
@@ -323,11 +368,13 @@ private:
                 m_timelineSlider->setRange(0, static_cast<int>(m_totalFrames-1));
                 m_dataReady = true;
                 updateDisplays();
+                updateStatus();
             }, Qt::QueuedConnection);
         } catch (...) {
             QMetaObject::invokeMethod(this, [this]{
                 m_pathLabel->setText("Failed to load");
                 for (auto &p : m_panes) p.content->setText("Load failed");
+                updateStatus();
             }, Qt::QueuedConnection);
         }
     }
@@ -366,6 +413,7 @@ private:
     QTimer m_timer;
     QString m_loadedDir;
     std::vector<Pane> m_panes;
+    QLabel *m_statusLabel {nullptr};
     std::thread m_loaderThread;
     std::atomic<bool> m_abortLoading {false};
     std::atomic<bool> m_dataReady {false};
@@ -373,15 +421,40 @@ private:
     std::vector<EventCameraData> m_eventCams;
     std::atomic<size_t> m_currentIndex {0};
     size_t m_totalFrames {1};
+    double m_assumedFps {30.0};
 protected:
     void resizeEvent(QResizeEvent *e) override {
         QWidget::resizeEvent(e);
         updateDisplays();
+        updateStatus();
     }
 public:
     ~PlayerWindow() override {
         m_abortLoading = true;
         if (m_loaderThread.joinable()) m_loaderThread.join();
+    }
+private:
+    QString formatTime(double seconds) const {
+        if (seconds < 0) seconds = 0;
+        int ms = static_cast<int>(std::llround(seconds * 1000.0));
+        int h = ms / 3600000; ms %= 3600000;
+        int m = ms / 60000;   ms %= 60000;
+        int s = ms / 1000;    ms %= 1000;
+        if (h>0)
+            return QString::asprintf("%d:%02d:%02d.%03d", h, m, s, ms);
+        return QString::asprintf("%02d:%02d.%03d", m, s, ms);
+    }
+    void updateStatus() {
+        size_t total = m_totalFrames;
+        size_t cur = std::min<size_t>(m_currentIndex.load(), total? total-1:0);
+        double curTime = cur / m_assumedFps;
+        double totTime = (total>0? (total-1)/m_assumedFps:0.0);
+        if (m_statusLabel) {
+            m_statusLabel->setText(QString("Frame %1 / %2    %3 / %4")
+                .arg(cur).arg(total? total-1:0)
+                .arg(formatTime(curTime))
+                .arg(formatTime(totTime)));
+        }
     }
 };
 
