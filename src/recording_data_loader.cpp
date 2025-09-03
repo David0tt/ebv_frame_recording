@@ -9,6 +9,7 @@
 #include <mutex>
 #include <chrono>
 #include <thread>
+#include <cmath>
 
 // Utility function implementations
 QImage cvMatToQImage(const cv::Mat &mat) {
@@ -43,6 +44,163 @@ long long extract_frame_index(const std::string &pathStr) {
     while (i >= 0 && std::isdigit(static_cast<unsigned char>(name[i]))) --i;
     std::string num = name.substr(i + 1, end - i);
     try { return std::stoll(num); } catch (...) { return -1; }
+}
+
+// EventCameraLoader implementation
+EventCameraLoader::EventCameraLoader(const std::string &filePath) 
+    : m_filePath(filePath) {
+    initialize();
+}
+
+EventCameraLoader::~EventCameraLoader() = default;
+
+void EventCameraLoader::initialize() {
+    try {
+        // Use Stream API for efficient file access
+        Metavision::Camera camera = Metavision::Camera::from_file(m_filePath);
+        
+        // Get camera geometry
+        auto &geometry = camera.geometry();
+        m_width = geometry.get_width();
+        m_height = geometry.get_height();
+        
+        // Estimate frame count based on file duration and assumed fps
+        auto duration_us = camera.offline_streaming_control().get_duration();
+        if (duration_us > 0) {
+            // Assume 30 fps for estimation
+            m_estimatedFrameCount = static_cast<size_t>(std::ceil(duration_us / 33333.0)); // 33.333ms per frame
+        } else {
+            m_estimatedFrameCount = 1000; // fallback estimate
+        }
+        
+        m_isValid = true;
+        std::cout << "EventCameraLoader initialized: " << m_width << "x" << m_height 
+                  << ", estimated frames: " << m_estimatedFrameCount 
+                  << ", duration: " << duration_us << " us" << std::endl;
+                  
+    } catch (const std::exception &e) {
+        std::cout << "Failed to initialize EventCameraLoader: " << e.what() << std::endl;
+        m_isValid = false;
+    }
+}
+
+QImage EventCameraLoader::getFrame(size_t frameIndex, double fps) {
+    if (!m_isValid) {
+        return QImage(m_width > 0 ? m_width : 640, m_height > 0 ? m_height : 480, QImage::Format_RGBA8888);
+    }
+    
+    std::lock_guard<std::mutex> lock(m_frameMutex);
+    
+    // Check frame cache first
+    auto it = m_frameCache.find(frameIndex);
+    if (it != m_frameCache.end()) {
+        return it->second;
+    }
+    
+    // Calculate time range for this frame
+    Metavision::timestamp frameDuration = static_cast<Metavision::timestamp>(1000000.0 / fps); // microseconds
+    Metavision::timestamp frameStartTime = frameIndex * frameDuration;
+    Metavision::timestamp frameEndTime = frameStartTime + frameDuration;
+    
+    // Generate frame on-demand using streaming approach (no pre-loading)
+    QImage frame = generateFrameFromTimeRange(frameStartTime, frameEndTime);
+    
+    // Cache the frame
+    m_frameCache[frameIndex] = frame;
+    
+    // Limit cache size to prevent memory bloat
+    if (m_frameCache.size() > MAX_CACHE_SIZE) {
+        auto oldest = m_frameCache.begin();
+        for (auto it = m_frameCache.begin(); it != m_frameCache.end(); ++it) {
+            if (it->first < oldest->first) {
+                oldest = it;
+            }
+        }
+        m_frameCache.erase(oldest);
+    }
+    
+    return frame;
+}
+
+QImage EventCameraLoader::generateFrameFromTimeRange(Metavision::timestamp startTime, Metavision::timestamp endTime) {
+    try {
+        // Use a streaming approach: create a temporary camera instance for this frame
+        Metavision::Camera camera = Metavision::Camera::from_file(m_filePath);
+        
+        // Seek to the start time
+        camera.offline_streaming_control().seek(startTime);
+        
+        // Collect events in the time range
+        std::vector<Metavision::EventCD> frameEvents;
+        frameEvents.reserve(100000); // Reserve reasonable space
+        
+        auto callbackId = camera.cd().add_callback([&frameEvents, startTime, endTime](const Metavision::EventCD *begin, const Metavision::EventCD *end) {
+            for (auto it = begin; it != end; ++it) {
+                if (it->t >= startTime && it->t < endTime) {
+                    frameEvents.push_back(*it);
+                } else if (it->t >= endTime) {
+                    // We've gone past our time window, stop collecting
+                    break;
+                }
+            }
+        });
+        
+        // Start the camera and process until we reach our end time
+        camera.start();
+        
+        auto processingStart = std::chrono::high_resolution_clock::now();
+        const auto maxProcessingTime = std::chrono::milliseconds(200); // Quick timeout
+        
+        while (camera.is_running()) {
+            auto now = std::chrono::high_resolution_clock::now();
+            if (now - processingStart > maxProcessingTime) {
+                break;
+            }
+            
+            // Check if we've processed past our end time
+            if (camera.get_last_timestamp() >= endTime) {
+                break;
+            }
+            
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        
+        camera.stop();
+        camera.cd().remove_callback(callbackId);
+        
+        // Generate frame from collected events
+        return generateFrameFromEvents(frameEvents);
+        
+    } catch (const std::exception &e) {
+        std::cout << "Error generating frame for time " << startTime << ": " << e.what() << std::endl;
+    }
+    
+    // Return error frame
+    QImage errorFrame(m_width, m_height, QImage::Format_RGBA8888);
+    errorFrame.fill(Qt::darkGray);
+    return errorFrame;
+}
+
+QImage EventCameraLoader::generateFrameFromEvents(const std::vector<Metavision::EventCD> &events) {
+    // Create accumulation frame
+    cv::Mat frame = cv::Mat::zeros(m_height, m_width, CV_8UC3);
+    
+    // Background color (dark gray)
+    frame.setTo(cv::Scalar(64, 64, 64));
+    
+    // Accumulate events with simple visualization
+    for (const auto &event : events) {
+        if (event.x >= 0 && event.x < m_width && event.y >= 0 && event.y < m_height) {
+            cv::Vec3b &pixel = frame.at<cv::Vec3b>(event.y, event.x);
+            if (event.p == 1) { // Positive event (white)
+                pixel[0] = 255; pixel[1] = 255; pixel[2] = 255;
+            } else { // Negative event (blue)
+                pixel[0] = 255; pixel[1] = 0; pixel[2] = 0; // BGR format: Blue=255, Green=0, Red=0
+            }
+        }
+    }
+    
+    return cvMatToQImage(frame);
 }
 
 // RecordingDataLoader implementation
@@ -91,10 +249,12 @@ QImage RecordingDataLoader::getEventCameraFrame(int camera, size_t frameIndex) c
         return {};
     }
     const auto &eventCam = m_data.eventCams[camera];
-    if (frameIndex >= eventCam.frames.size()) {
+    if (!eventCam.loader || !eventCam.isValid) {
         return {};
     }
-    return eventCam.frames[frameIndex];
+    
+    // Use lazy loading - generate frame on demand
+    return eventCam.loader->getFrame(frameIndex);
 }
 
 void RecordingDataLoader::loadDataWorker(const std::string &dirPath) {
@@ -190,60 +350,33 @@ void RecordingDataLoader::loadEventCameraData(const std::string &dirPath, int ca
     
     if (fs::exists(fileH5)) {
         useFile = fileH5;
+        std::cout << "Found HDF5 file for camera " << camera << ": " << useFile << std::endl;
     } else if (fs::exists(fileRaw)) {
         useFile = fileRaw;
+        std::cout << "Found RAW file for camera " << camera << ": " << useFile << std::endl;
     }
     
     if (!useFile.empty()) {
-        // Load events and build accumulation frames
-        Metavision::Camera camObj;
-        try {
-            camObj = Metavision::Camera::from_file(useFile.string());
-            auto &geometry = camObj.geometry();
-            int width = geometry.get_width();
-            int height = geometry.get_height();
+        // Initialize lazy loader instead of pre-generating all frames
+        data.filePath = useFile.string();
+        data.loader = std::make_unique<EventCameraLoader>(useFile.string());
+        
+        if (data.loader->isValid()) {
+            data.width = data.loader->getWidth();
+            data.height = data.loader->getHeight();
+            data.estimatedFrameCount = data.loader->getEstimatedFrameCount();
+            data.isValid = true;
             
-            Metavision::CDFrameGenerator generator(width, height);
-            generator.set_display_accumulation_time_us(33333); // ~30 fps
-            std::mutex gMutex;
-            
-            generator.start(30, [&data, &gMutex, this](const Metavision::timestamp &ts, const cv::Mat &frame) {
-                if (m_abortLoading) return;
-                
-                cv::Mat gray;
-                if (frame.channels() == 1) {
-                    gray = frame;
-                } else {
-                    cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-                }
-                
-                std::lock_guard<std::mutex> lock(gMutex);
-                data.frames.push_back(cvMatToQImage(gray));
-            });
-            
-            camObj.cd().add_callback([&generator, &gMutex](const Metavision::EventCD *begin, const Metavision::EventCD *end) {
-                std::lock_guard<std::mutex> lock(gMutex);
-                generator.add_events(begin, end);
-            });
-            
-            camObj.start();
-            
-            // Poll until end of file
-            while (!m_abortLoading) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                if (!camObj.is_running()) break; // if API available
-            }
-            
-            camObj.stop();
-            generator.stop();
-            
-        } catch (const std::exception &e) {
-            // Create error frame
-            QImage errImg(400, 200, QImage::Format_RGBA8888);
-            errImg.fill(Qt::black);
-            data.frames.push_back(errImg);
-            std::cout << "Error loading event camera " << camera << ": " << e.what() << std::endl;
+            std::cout << "EventCamera " << camera << " loaded: " 
+                      << data.width << "x" << data.height 
+                      << ", estimated frames: " << data.estimatedFrameCount << std::endl;
+        } else {
+            std::cout << "Failed to load event camera " << camera << std::endl;
+            data.isValid = false;
         }
+    } else {
+        std::cout << "No event data file found for camera " << camera << std::endl;
+        data.isValid = false;
     }
 }
 
@@ -255,7 +388,9 @@ size_t RecordingDataLoader::calculateTotalFrames() const {
     
     size_t maxEventCount = 0;
     for (const auto &e : m_data.eventCams) {
-        maxEventCount = std::max(maxEventCount, e.frames.size());
+        if (e.isValid) {
+            maxEventCount = std::max(maxEventCount, e.estimatedFrameCount);
+        }
     }
     
     size_t total = std::max(maxFrameCount, maxEventCount);

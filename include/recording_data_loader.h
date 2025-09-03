@@ -5,12 +5,16 @@
 #include <opencv2/opencv.hpp>
 #include <metavision/sdk/stream/camera.h>
 #include <metavision/sdk/core/utils/cd_frame_generator.h>
+#include <metavision/sdk/base/events/event_cd.h>
 
 #include <vector>
 #include <string>
 #include <thread>
 #include <atomic>
 #include <functional>
+#include <memory>
+#include <unordered_map>
+#include <mutex>
 
 struct FrameCameraData {
     std::vector<std::string> image_files; // sorted
@@ -21,9 +25,49 @@ struct FrameCameraData {
     }
 };
 
+// Forward declaration
+class EventCameraLoader;
+
 struct EventCameraData {
-    // Pre-generated event accumulation frames as QImages
-    std::vector<QImage> frames;
+    std::string filePath;
+    std::unique_ptr<EventCameraLoader> loader;
+    size_t estimatedFrameCount{0};
+    int width{0};
+    int height{0};
+    bool isValid{false};
+};
+
+// Efficient event camera frame loader with lazy generation
+class EventCameraLoader {
+public:
+    EventCameraLoader(const std::string &filePath);
+    ~EventCameraLoader();
+    
+    // Get frame at specific time index (lazy generation)
+    QImage getFrame(size_t frameIndex, double fps = 30.0);
+    
+    // Get metadata
+    int getWidth() const { return m_width; }
+    int getHeight() const { return m_height; }
+    size_t getEstimatedFrameCount() const { return m_estimatedFrameCount; }
+    bool isValid() const { return m_isValid; }
+    
+private:
+    void initialize();
+    QImage generateFrameFromTimeRange(Metavision::timestamp startTime, Metavision::timestamp endTime);
+    QImage generateFrameFromEvents(const std::vector<Metavision::EventCD> &events);
+    
+    std::string m_filePath;
+    
+    int m_width{0};
+    int m_height{0};
+    size_t m_estimatedFrameCount{0};
+    bool m_isValid{false};
+    
+    // Frame cache only (no event pre-loading)
+    std::unordered_map<size_t, QImage> m_frameCache;
+    std::mutex m_frameMutex;
+    static const size_t MAX_CACHE_SIZE = 10000;
 };
 
 struct RecordingData {
