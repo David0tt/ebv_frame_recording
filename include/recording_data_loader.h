@@ -15,6 +15,8 @@
 #include <memory>
 #include <unordered_map>
 #include <mutex>
+#include <condition_variable>
+#include <atomic>
 
 struct FrameCameraData {
     std::vector<std::string> image_files; // sorted
@@ -45,6 +47,9 @@ public:
     
     // Get frame at specific time index (lazy generation)
     QImage getFrame(size_t frameIndex, double fps = 30.0);
+    // Notify loader of externally updated playback position (optional helper)
+    void setCurrentFrameIndex(size_t frameIndex);
+    void setPlaybackFps(double fps);
     
     // Get metadata
     int getWidth() const { return m_width; }
@@ -56,6 +61,8 @@ private:
     void initialize();
     QImage generateFrameFromTimeRange(Metavision::timestamp startTime, Metavision::timestamp endTime);
     QImage generateFrameFromEvents(const std::vector<Metavision::EventCD> &events);
+    void prefetchThreadMain();
+    void requestPrefetch();
     
     std::string m_filePath;
     
@@ -68,6 +75,16 @@ private:
     std::unordered_map<size_t, QImage> m_frameCache;
     std::mutex m_frameMutex;
     static const size_t MAX_CACHE_SIZE = 10000;
+    static const size_t PREFETCH_AHEAD_FRAMES = MAX_CACHE_SIZE / 2; // how many future frames to pre-generate
+
+    // Prefetch machinery
+    std::thread m_prefetchThread;
+    std::atomic<bool> m_stopPrefetch{false};
+    std::atomic<size_t> m_currentFrameIndex{0};
+    std::atomic<double> m_fps{30.0};
+    std::mutex m_prefetchMutex;
+    std::condition_variable m_prefetchCv;
+    bool m_prefetchDirty{false};
 };
 
 struct RecordingData {
