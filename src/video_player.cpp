@@ -476,4 +476,4 @@ int main(int argc, char *argv[]) {
 
 // TODO try to understand this better, this does not feel right
 // Required when Q_OBJECT appears only in this implementation file
-#include "video_player_mockup.moc"
+#include "video_player.moc"

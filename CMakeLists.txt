@@ -130,7 +130,7 @@ set(QT_WIDGETS_LIB Qt6::Widgets)
 # endif()
 
 add_executable(video_player
-    src/video_player_mockup.cpp
+    src/video_player.cpp
 )
 
 target_link_libraries(video_player PRIVATE 
