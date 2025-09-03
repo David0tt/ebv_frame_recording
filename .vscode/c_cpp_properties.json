@@ -1,0 +1,24 @@
+{
+    "configurations": [
+    {
+        "name": "Cpp",
+        "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+        "includePath": [
+            "${workspaceFolder}/include/**",
+            // "${workspaceFolder}/external/CLI11",
+            // "${workspaceFolder}/external/opencv/include/**",
+            // "${workspaceFolder}/external/opencv/build/include/**",
+            // "${workspaceFolder}/external/openeb/build/generated/include/**",
+            // "${workspaceFolder}/external/openeb/sdk/modules/*/cpp/include/**",
+            // "${workspaceFolder}/external/pybind11-2.11.0/include/**",
+            // "/usr/include/ids_peak-1.11.1/**",
+            // "/usr/include/ids_peak_ipl-1.16.1/**",
+            // "/usr/include/x86_64-linux-gnu/qt6/**"
+        ],
+        "defines": [],
+        "intelliSenseMode": "gcc-x64",
+        "cppStandard": "c++17"
+    }
+    ],
+    "version": 4
+}
