@@ -131,6 +131,14 @@ set(QT_WIDGETS_LIB Qt6::Widgets)
 
 add_executable(video_player
     src/video_player.cpp
+    src/player_window.cpp
+    include/player_window.h
+)
+
+target_include_directories(video_player PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
+    ${METAVISION_INCLUDE_DIR}
 )
 
 target_link_libraries(video_player PRIVATE 
