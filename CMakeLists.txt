@@ -70,6 +70,7 @@ add_executable(ebv_frame_recording
     src/ebv_frame_recording.cpp
     src/frame_camera_manager.cpp
     src/event_camera_manager.cpp
+    src/recording_manager.cpp
     src/utils.cpp
 )
 
