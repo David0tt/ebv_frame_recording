@@ -1,4 +1,4 @@
-#include "recording_data_loader.h"
+#include "recording_loader.h"
 
 #include <QMetaObject>
 #include <QString>
@@ -340,15 +340,15 @@ void EventCameraLoader::prefetchThreadMain() {
     }
 }
 
-// RecordingDataLoader implementation
-RecordingDataLoader::RecordingDataLoader(QObject *parent) : QObject(parent) {
+// RecordingLoader implementation
+RecordingLoader::RecordingLoader(QObject *parent) : QObject(parent) {
 }
 
-RecordingDataLoader::~RecordingDataLoader() {
+RecordingLoader::~RecordingLoader() {
     abortLoading();
 }
 
-void RecordingDataLoader::loadRecording(const std::string &dirPath) {
+void RecordingLoader::loadRecording(const std::string &dirPath) {
     // Abort any existing loading
     abortLoading();
     
@@ -366,7 +366,7 @@ void RecordingDataLoader::loadRecording(const std::string &dirPath) {
     });
 }
 
-void RecordingDataLoader::abortLoading() {
+void RecordingLoader::abortLoading() {
     m_abortLoading = true;
     if (m_loaderThread.joinable()) {
         m_loaderThread.join();
@@ -374,14 +374,14 @@ void RecordingDataLoader::abortLoading() {
     m_loading = false;
 }
 
-cv::Mat RecordingDataLoader::getFrameCameraFrame(int camera, size_t frameIndex) const {
+cv::Mat RecordingLoader::getFrameCameraFrame(int camera, size_t frameIndex) const {
     if (!m_dataReady.load() || camera < 0 || camera >= static_cast<int>(m_data.frameCams.size())) {
         return {};
     }
     return m_data.frameCams[camera].loadFrame(frameIndex);
 }
 
-QImage RecordingDataLoader::getEventCameraFrame(int camera, size_t frameIndex) const {
+QImage RecordingLoader::getEventCameraFrame(int camera, size_t frameIndex) const {
     if (!m_dataReady.load() || camera < 0 || camera >= static_cast<int>(m_data.eventCams.size())) {
         return {};
     }
@@ -394,7 +394,7 @@ QImage RecordingDataLoader::getEventCameraFrame(int camera, size_t frameIndex) c
     return eventCam.loader->getFrame(frameIndex);
 }
 
-QSet<int> RecordingDataLoader::getCachedEventFrames(int camera) const {
+QSet<int> RecordingLoader::getCachedEventFrames(int camera) const {
     if (!m_dataReady.load() || camera < 0 || camera >= static_cast<int>(m_data.eventCams.size())) {
         return {};
     }
@@ -405,7 +405,7 @@ QSet<int> RecordingDataLoader::getCachedEventFrames(int camera) const {
     return eventCam.loader->getCachedFrames();
 }
 
-QSet<int> RecordingDataLoader::getAllCachedFrames() const {
+QSet<int> RecordingLoader::getAllCachedFrames() const {
     QSet<int> allCached;
     
     // Only show event camera cached frames since that's where the expensive processing happens
@@ -418,7 +418,7 @@ QSet<int> RecordingDataLoader::getAllCachedFrames() const {
     return allCached;
 }
 
-void RecordingDataLoader::notifyFrameChanged(size_t frameIndex) {
+void RecordingLoader::notifyFrameChanged(size_t frameIndex) {
     if (!m_dataReady.load()) return;
     
     // Notify all event camera loaders about the frame change for prefetching
@@ -429,7 +429,7 @@ void RecordingDataLoader::notifyFrameChanged(size_t frameIndex) {
     }
 }
 
-void RecordingDataLoader::loadDataWorker(const std::string &dirPath) {
+void RecordingLoader::loadDataWorker(const std::string &dirPath) {
     namespace fs = std::filesystem;
     
     try {
@@ -479,7 +479,7 @@ void RecordingDataLoader::loadDataWorker(const std::string &dirPath) {
     }
 }
 
-void RecordingDataLoader::loadFrameCameraData(const std::string &dirPath, int camera, FrameCameraData &data) {
+void RecordingLoader::loadFrameCameraData(const std::string &dirPath, int camera, FrameCameraData &data) {
     namespace fs = std::filesystem;
     
     fs::path camDir = fs::path(dirPath) / ("frame_cam" + std::to_string(camera));
@@ -513,7 +513,7 @@ void RecordingDataLoader::loadFrameCameraData(const std::string &dirPath, int ca
     }
 }
 
-void RecordingDataLoader::loadEventCameraData(const std::string &dirPath, int camera, EventCameraData &data) {
+void RecordingLoader::loadEventCameraData(const std::string &dirPath, int camera, EventCameraData &data) {
     namespace fs = std::filesystem;
     
     fs::path fileH5 = fs::path(dirPath) / ("ebv_cam_" + std::to_string(camera) + ".hdf5");
@@ -552,7 +552,7 @@ void RecordingDataLoader::loadEventCameraData(const std::string &dirPath, int ca
     }
 }
 
-size_t RecordingDataLoader::calculateTotalFrames() const {
+size_t RecordingLoader::calculateTotalFrames() const {
     size_t maxFrameCount = 0;
     for (const auto &f : m_data.frameCams) {
         maxFrameCount = std::max(maxFrameCount, f.image_files.size());

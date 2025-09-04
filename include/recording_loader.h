@@ -100,12 +100,12 @@ struct RecordingData {
     bool isValid{false};
 };
 
-class RecordingDataLoader : public QObject {
+class RecordingLoader : public QObject {
     Q_OBJECT
 
 public:
-    explicit RecordingDataLoader(QObject *parent = nullptr);
-    ~RecordingDataLoader();
+    explicit RecordingLoader(QObject *parent = nullptr);
+    ~RecordingLoader();
 
     // Async loading
     void loadRecording(const std::string &dirPath);

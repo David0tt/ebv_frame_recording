@@ -48,10 +48,10 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     resize(1400, 900);
 
     // Initialize data loader
-    m_dataLoader = new RecordingDataLoader(this);
-    connect(m_dataLoader, &RecordingDataLoader::loadingStarted, this, &PlayerWindow::onLoadingStarted);
-    connect(m_dataLoader, &RecordingDataLoader::loadingFinished, this, &PlayerWindow::onLoadingFinished);
-    connect(m_dataLoader, &RecordingDataLoader::loadingProgress, this, &PlayerWindow::onLoadingProgress);
+    m_dataLoader = new RecordingLoader(this);
+    connect(m_dataLoader, &RecordingLoader::loadingStarted, this, &PlayerWindow::onLoadingStarted);
+    connect(m_dataLoader, &RecordingLoader::loadingFinished, this, &PlayerWindow::onLoadingFinished);
+    connect(m_dataLoader, &RecordingLoader::loadingProgress, this, &PlayerWindow::onLoadingProgress);
 
     auto *rootLayout = new QVBoxLayout(this);
 

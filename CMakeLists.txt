@@ -133,10 +133,10 @@ set(QT_WIDGETS_LIB Qt6::Widgets)
 add_executable(video_player
     src/video_player.cpp
     src/player_window.cpp
-    src/recording_data_loader.cpp
+    src/recording_loader.cpp
     src/cached_timeline_slider.cpp
     include/player_window.h
-    include/recording_data_loader.h
+    include/recording_loader.h
     include/cached_timeline_slider.h
 )
 

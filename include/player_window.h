@@ -11,7 +11,7 @@
 #include <QResizeEvent>
 
 #include <opencv2/opencv.hpp>
-#include "recording_data_loader.h"
+#include "recording_loader.h"
 #include "cached_timeline_slider.h"
 
 #include <vector>
@@ -62,7 +62,7 @@ private:
     QLabel *m_fpsLabel {nullptr};
     
     // Data loader
-    RecordingDataLoader *m_dataLoader {nullptr};
+    RecordingLoader *m_dataLoader {nullptr};
     
     std::atomic<size_t> m_currentIndex {0};
     double m_assumedFps {30.0};
