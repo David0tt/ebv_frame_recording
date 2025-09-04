@@ -210,6 +210,31 @@ void EventCameraManager::stopRecording() {
     }
 }
 
+void EventCameraManager::closeDevices() {
+    try {
+        // Stop recording if still active
+        if (m_recording) {
+            stopRecording();
+        }
+        
+        // Close and release all cameras
+        for (size_t i = 0; i < m_cameras.size(); ++i) {
+            if (m_cameras[i]) {
+                const std::string cameraType = (i == 0) ? "master" : "slave";
+                std::cout << "Closing " << cameraType << " camera " << i << std::endl;
+                // Camera destructor will handle proper cleanup
+                m_cameras[i].reset();
+            }
+        }
+        
+        m_cameras.clear();
+        std::cout << "All event cameras closed and resources released" << std::endl;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error closing cameras: " << e.what() << std::endl;
+    }
+}
+
 EventCameraManager::BiasConfig EventCameraManager::clipBiasValues(const BiasConfig& biases) {
     BiasConfig clippedBiases = biases;
     

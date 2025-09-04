@@ -229,6 +229,12 @@ void PlayerWindow::loadRecording(const QString &dirPath) {
         return;
     }
     
+    // Abort any ongoing loading and clean up previous state
+    if (m_dataLoader->isLoading()) {
+        std::cout << "Aborting previous loading operation..." << std::endl;
+        m_dataLoader->abortLoading();
+    }
+    
     m_loadedDir = dirPath;
     m_currentIndex = 0;
     m_timelineSlider->setValue(0);
@@ -247,6 +253,8 @@ void PlayerWindow::loadRecording(const QString &dirPath) {
         p.content->setText("Loading...");
     }
 
+    std::cout << "Loading recording from: " << dirPath.toStdString() << std::endl;
+    
     // Start loading via data loader
     m_dataLoader->loadRecording(dirPath.toStdString());
     updateStatus();
@@ -442,6 +450,10 @@ void PlayerWindow::stopRecording() {
         QString recordingDir = QString::fromStdString(m_recordingManager->getCurrentOutputDirectory());
         m_recordingManager->stopRecording();
         
+        // Explicitly close all camera devices to release file handles
+        std::cout << "Closing camera devices to release file handles..." << std::endl;
+        m_recordingManager->closeDevices();
+        
         m_isRecording = false;
         m_recordButton->setText(tr("Start Recording"));
         m_recordButton->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
@@ -454,8 +466,10 @@ void PlayerWindow::stopRecording() {
             QMessageBox::information(this, tr("Recording Complete"), 
                                    tr("Recording saved to: %1\n\nLoading for playback...").arg(recordingDir));
             
-            // Add a short delay to ensure all files are properly closed and written
-            QTimer::singleShot(1000, this, [this, recordingDir]() {
+            // Add a longer delay to ensure all files are properly closed, written, and synced
+            // Event camera files may need more time to flush buffers and close file handles
+            QTimer::singleShot(3000, this, [this, recordingDir]() {
+                std::cout << "Auto-loading recorded folder after delay: " << recordingDir.toStdString() << std::endl;
                 loadRecording(recordingDir);
             });
         }

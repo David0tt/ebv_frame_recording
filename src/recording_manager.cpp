@@ -105,6 +105,17 @@ void RecordingManager::stopRecording() {
     }
 }
 
+void RecordingManager::closeDevices() {
+    try {
+        notifyStatus("Closing and releasing camera resources...");
+        m_eventCameraManager->closeDevices();
+        // Frame cameras don't need explicit closing as they handle it in their destructor
+        notifyStatus("All camera resources released successfully");
+    } catch (const std::exception& e) {
+        notifyStatus("Error closing devices: " + std::string(e.what()));
+    }
+}
+
 double RecordingManager::getRecordingDurationSeconds() const {
     if (!m_recording && m_recordingStartTime == std::chrono::steady_clock::time_point{}) {
         return 0.0;

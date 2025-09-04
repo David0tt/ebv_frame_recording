@@ -32,6 +32,7 @@ public:
     void openAndSetupDevices(const std::vector<CameraConfig>& cameraConfigs = {});
     void startRecording(const std::string& outputPath, const std::string& fileFormat = "hdf5");
     void stopRecording();
+    void closeDevices(); // Explicitly close all cameras and release resources
 
 private:
     void setupDevice(std::unique_ptr<Metavision::Camera>& camera, bool isMaster, const BiasConfig& biases);

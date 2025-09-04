@@ -31,6 +31,7 @@ public:
     bool startRecording(const RecordingConfig& config);
     bool startRecording(const std::string& outputDirectory, const RecordingConfig& config);
     void stopRecording();
+    void closeDevices(); // Close and release all camera resources
     
     // Status and information
     bool isRecording() const { return m_recording; }
