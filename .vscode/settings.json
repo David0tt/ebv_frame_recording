@@ -1,4 +1,9 @@
 {
+    "chat.tools.terminal.autoApprove": {
+       "/^ninja\\b/": true,
+       "cd": true,
+       "/^cmake\\b/": true
+   },
     "files.associations": {
         "string": "cpp",
         "any": "cpp",
