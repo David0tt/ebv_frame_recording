@@ -27,11 +27,18 @@ public:
     RecordingManager();
     ~RecordingManager();
 
+    // Configuration interface - must be called before recording
+    bool configure(const RecordingConfig& config);
+    bool isConfigured() const { return m_configured; }
+    
     // Main recording interface
-    bool startRecording(const RecordingConfig& config);
-    bool startRecording(const std::string& outputDirectory, const RecordingConfig& config);
+    bool startRecording(const std::string& outputDirectory);
     void stopRecording();
     void closeDevices(); // Close and release all camera resources
+    
+    // Legacy interface for backward compatibility
+    bool startRecording(const RecordingConfig& config);
+    bool startRecording(const std::string& outputDirectory, const RecordingConfig& config);
     
     // Status and information
     bool isRecording() const { return m_recording; }
@@ -57,6 +64,7 @@ private:
     
     // Recording state
     std::atomic<bool> m_recording{false};
+    std::atomic<bool> m_configured{false};
     std::string m_currentOutputDir;
     std::chrono::steady_clock::time_point m_recordingStartTime;
     RecordingConfig m_currentConfig;

@@ -16,10 +16,13 @@
 #include <QPalette>
 #include <QMetaObject>
 #include "recording_manager.h"
+#include "recording_loader.h" // for cvMatToQImage utility function
 
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
+#include <chrono>
+#include <ctime>
 
 // Utility function implementations
 Pane createPane(const QString &title, const QColor &color) {
@@ -421,7 +424,20 @@ void PlayerWindow::startRecording() {
     std::cout << "  Biases provided: " << (config.biases.empty() ? "none (will use defaults)" : "yes") << std::endl;
     
     try {
-        if (m_recordingManager->startRecording(config)) {
+        // If not configured yet, configure now
+        if (!m_recordingManager->isConfigured()) {
+            notifyStatus("Configuring cameras for first use...");
+            if (!m_recordingManager->configure(config)) {
+                QMessageBox::warning(this, tr("Recording Error"), 
+                                   tr("Failed to configure cameras. Please check camera connections."));
+                return;
+            }
+        }
+        
+        // Generate output directory for this recording
+        std::string outputDir = generateRecordingDirectory();
+        
+        if (m_recordingManager->startRecording(outputDir)) {
             m_isRecording = true;
             m_recordButton->setText(tr("Stop Recording"));
             m_recordButton->setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }");
@@ -498,4 +514,21 @@ void PlayerWindow::onRecordingStatusUpdate(const QString &message) {
     // This slot receives status updates from the recording manager
     // For now, we'll just print to console, but could be used for more detailed status display
     std::cout << "Recording status: " << message.toStdString() << std::endl;
+}
+
+std::string PlayerWindow::generateRecordingDirectory() const {
+    const auto now = std::chrono::system_clock::now();
+    const auto time_t = std::chrono::system_clock::to_time_t(now);
+    const auto tm = *std::localtime(&time_t);
+    
+    char timestamp[32];
+    std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &tm);
+    
+    std::string outputDir = "./recording/" + std::string(timestamp);
+    
+    return outputDir;
+}
+
+void PlayerWindow::notifyStatus(const std::string& message) const {
+    std::cout << "GUI Status: " << message << std::endl;
 }

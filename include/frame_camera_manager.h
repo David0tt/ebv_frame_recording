@@ -27,6 +27,7 @@ public:
     void openAndSetupDevices();
     void startRecording(const std::string& outputPath);
     void stopRecording();
+    void closeDevices(); // Close and release all camera resources
 
 private:
     void setupDevice(std::shared_ptr<peak::core::Device> device);

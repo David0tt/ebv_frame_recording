@@ -1,5 +1,6 @@
 #include <iostream>
 #include <chrono>
+#include <ctime>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -68,12 +69,32 @@ int main(int argc, char** argv) {
         config.outputPrefix = output_prefix;
         config.recordingLengthSeconds = recording_length;
 
-        // Initialize recording manager
+        // Initialize and configure recording manager
         RecordingManager recordingManager;
         recordingManager.setShutdownFlag(&shutdown_flag);
+        
+        // Configure cameras first
+        if (!recordingManager.configure(config)) {
+            std::cerr << "Failed to configure cameras" << std::endl;
+            return 1;
+        }
+
+        // Generate output directory and start recording
+        std::string outputDir = "./recording/";
+        if (!output_prefix.empty()) {
+            outputDir += output_prefix + "_";
+        }
+        
+        // Add timestamp
+        const auto now = std::chrono::system_clock::now();
+        const auto time_t = std::chrono::system_clock::to_time_t(now);
+        const auto tm = *std::localtime(&time_t);
+        char timestamp[32];
+        std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &tm);
+        outputDir += std::string(timestamp);
 
         // Start recording
-        if (!recordingManager.startRecording(config)) {
+        if (!recordingManager.startRecording(outputDir)) {
             std::cerr << "Failed to start recording" << std::endl;
             return 1;
         }

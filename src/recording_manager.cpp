@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 // Default bias values
 const std::unordered_map<std::string, int> RecordingManager::DEFAULT_BIASES = {
@@ -25,48 +26,77 @@ RecordingManager::~RecordingManager() {
     if (m_recording) {
         stopRecording();
     }
+    // Close devices to release resources
+    closeDevices();
 }
 
-bool RecordingManager::startRecording(const RecordingConfig& config) {
-    std::string outputDir = generateOutputDirectory(config.outputPrefix);
-    return startRecording(outputDir, config);
-}
-
-bool RecordingManager::startRecording(const std::string& outputDirectory, const RecordingConfig& config) {
+bool RecordingManager::configure(const RecordingConfig& config) {
     if (m_recording) {
-        notifyStatus("Error: Recording is already in progress");
+        notifyStatus("Error: Cannot reconfigure while recording is in progress");
         return false;
     }
 
     try {
         validateConfig(config);
         
-        // Create output directory
-        std::filesystem::create_directories(outputDirectory);
-        m_currentOutputDir = outputDirectory;
+        // Close any previously opened devices
+        closeDevices();
+        
+        // Store configuration
         m_currentConfig = config;
         
+        notifyStatus("Configuring cameras...");
+        
+        // Open and setup frame cameras
         notifyStatus("Setting up frame cameras...");
         m_frameCameraManager->openAndSetupDevices();
         
+        // Open and setup event cameras
         notifyStatus("Setting up event cameras...");
         auto eventConfigs = createEventCameraConfigs(config);
         m_eventCameraManager->openAndSetupDevices(eventConfigs);
         
+        m_configured = true;
+        notifyStatus("Camera configuration completed successfully");
+        return true;
+        
+    } catch (const std::exception& e) {
+        notifyStatus("Error configuring cameras: " + std::string(e.what()));
+        m_configured = false;
+        return false;
+    }
+}
+
+bool RecordingManager::startRecording(const std::string& outputDirectory) {
+    if (m_recording) {
+        notifyStatus("Error: Recording is already in progress");
+        return false;
+    }
+    
+    if (!m_configured) {
+        notifyStatus("Error: Cameras must be configured before starting recording");
+        return false;
+    }
+
+    try {
+        // Create output directory
+        std::filesystem::create_directories(outputDirectory);
+        m_currentOutputDir = outputDirectory;
+        
         notifyStatus("Starting recording to: " + outputDirectory);
         m_recordingStartTime = std::chrono::steady_clock::now();
         
-        // Start recording on both managers
+        // Start recording on both managers (devices are already configured)
         notifyStatus("Starting event camera recording...");
-        m_eventCameraManager->startRecording(outputDirectory, config.eventFileFormat);
+        m_eventCameraManager->startRecording(outputDirectory, m_currentConfig.eventFileFormat);
         
         notifyStatus("Starting frame camera recording...");
         m_frameCameraManager->startRecording(outputDirectory);
         
         m_recording = true;
         
-        if (config.recordingLengthSeconds > 0) {
-            notifyStatus("Recording for " + std::to_string(config.recordingLengthSeconds) + " seconds...");
+        if (m_currentConfig.recordingLengthSeconds > 0) {
+            notifyStatus("Recording for " + std::to_string(m_currentConfig.recordingLengthSeconds) + " seconds...");
         } else {
             notifyStatus("Recording indefinitely. Call stopRecording() to stop.");
         }
@@ -79,6 +109,20 @@ bool RecordingManager::startRecording(const std::string& outputDirectory, const 
     }
 }
 
+// Legacy interface for backward compatibility
+bool RecordingManager::startRecording(const RecordingConfig& config) {
+    std::string outputDir = generateOutputDirectory(config.outputPrefix);
+    return startRecording(outputDir, config);
+}
+
+bool RecordingManager::startRecording(const std::string& outputDirectory, const RecordingConfig& config) {
+    // Configure first, then start recording
+    if (!configure(config)) {
+        return false;
+    }
+    return startRecording(outputDirectory);
+}
+
 void RecordingManager::stopRecording() {
     if (!m_recording) {
         return;
@@ -87,17 +131,25 @@ void RecordingManager::stopRecording() {
     notifyStatus("Stopping recording...");
     
     try {
+        // Stop frame camera recording first (typically faster to stop)
         notifyStatus("Stopping frame camera recording...");
         m_frameCameraManager->stopRecording();
         
-        notifyStatus("Stopping event camera recording...");
+        // Stop event camera recording and ensure flushing
+        notifyStatus("Stopping event camera recording and flushing data...");
         m_eventCameraManager->stopRecording();
+        
+        // Give extra time for buffers to flush to disk
+        notifyStatus("Waiting for data flush to complete...");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         
         m_recording = false;
         
         auto duration = getRecordingDurationSeconds();
         notifyStatus("Recording completed successfully! Duration: " + 
                     std::to_string(duration) + " seconds");
+                    
+        notifyStatus("All recording data has been flushed to disk");
                     
     } catch (const std::exception& e) {
         notifyStatus("Error stopping recording: " + std::string(e.what()));
@@ -108,8 +160,19 @@ void RecordingManager::stopRecording() {
 void RecordingManager::closeDevices() {
     try {
         notifyStatus("Closing and releasing camera resources...");
+        
+        // Stop recording if still active
+        if (m_recording) {
+            stopRecording();
+        }
+        
+        // Close event cameras
         m_eventCameraManager->closeDevices();
-        // Frame cameras don't need explicit closing as they handle it in their destructor
+        
+        // Close frame cameras  
+        m_frameCameraManager->closeDevices();
+        
+        m_configured = false;
         notifyStatus("All camera resources released successfully");
     } catch (const std::exception& e) {
         notifyStatus("Error closing devices: " + std::string(e.what()));

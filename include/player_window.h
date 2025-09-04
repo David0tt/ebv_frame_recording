@@ -56,6 +56,8 @@ private:
     void updateCachedFrames();
     void updateFPS(size_t currentFrame);
     QString formatTime(double seconds) const;
+    std::string generateRecordingDirectory() const;
+    void notifyStatus(const std::string& message) const;
 
     QPushButton *m_openButton {nullptr};
     QLabel *m_pathLabel {nullptr};

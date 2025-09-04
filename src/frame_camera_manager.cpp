@@ -17,7 +17,7 @@ FrameCameraManager::FrameCameraManager() {
 }
 
 FrameCameraManager::~FrameCameraManager() {
-    stopRecording();
+    closeDevices();
     peak::Library::Close();
 }
 
@@ -240,5 +240,47 @@ void FrameCameraManager::diskWriterWorker(const std::string& outputPath) {
     }
 
     std::cout << "Disk writer thread finished" << std::endl;
+}
+
+void FrameCameraManager::closeDevices() {
+    try {
+        // First ensure recording is stopped
+        stopRecording();
+        
+        std::cout << "Closing frame camera devices..." << std::endl;
+        
+        // Close data streams first
+        for (auto& dataStream : m_dataStreams) {
+            if (dataStream) {
+                try {
+                    dataStream->Flush(peak::core::DataStreamFlushMode::DiscardAll);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error flushing data stream: " << e.what() << std::endl;
+                }
+            }
+        }
+        m_dataStreams.clear();
+        
+        // Close devices
+        for (size_t i = 0; i < m_devices.size(); ++i) {
+            if (m_devices[i]) {
+                try {
+                    auto remoteNodemap = m_devices[i]->RemoteDevice()->NodeMaps()[0];
+                    remoteNodemap->FindNode<peak::core::nodes::IntegerNode>("TLParamsLocked")->SetValue(0);
+                    std::cout << "Closed frame camera device " << i << std::endl;
+                } catch (const std::exception& e) {
+                    std::cerr << "Error closing frame camera device " << i << ": " << e.what() << std::endl;
+                }
+            }
+        }
+        
+        // Clear device list
+        m_devices.clear();
+        
+        std::cout << "All frame camera devices closed and resources released" << std::endl;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error closing frame camera devices: " << e.what() << std::endl;
+    }
 }
 
