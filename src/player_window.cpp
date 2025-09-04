@@ -15,6 +15,7 @@
 #include <QColor>
 #include <QPalette>
 #include <QMetaObject>
+#include "recording_manager.h"
 
 #include <filesystem>
 #include <algorithm>
@@ -53,16 +54,35 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     connect(m_dataLoader, &RecordingLoader::loadingFinished, this, &PlayerWindow::onLoadingFinished);
     connect(m_dataLoader, &RecordingLoader::loadingProgress, this, &PlayerWindow::onLoadingProgress);
 
+    // Initialize recording manager
+    m_recordingManager = new RecordingManager();
+    m_recordingManager->setStatusCallback([this](const std::string& message) {
+        emit QMetaObject::invokeMethod(this, "onRecordingStatusUpdate", 
+                                      Qt::QueuedConnection,
+                                      Q_ARG(QString, QString::fromStdString(message)));
+    });
+
     auto *rootLayout = new QVBoxLayout(this);
 
-    // Top bar with Open button + path label
+    // Top bar with Open button + path label + recording controls
     auto *topBar = new QHBoxLayout();
     m_openButton = new QPushButton(tr("Open Folder…"));
     m_pathLabel = new QLabel(tr("No folder loaded"));
     m_pathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    
+    // Recording controls on the right
+    m_recordButton = new QPushButton(tr("Start Recording"));
+    m_recordButton->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
+    m_recordingStatusLabel = new QLabel("");
+    m_recordingStatusLabel->setStyleSheet("QLabel { color: red; font-weight: bold; }");
+    
     topBar->addWidget(m_openButton);
     topBar->addSpacing(12);
     topBar->addWidget(m_pathLabel, 1);
+    topBar->addStretch();
+    topBar->addWidget(m_recordingStatusLabel);
+    topBar->addSpacing(8);
+    topBar->addWidget(m_recordButton);
     rootLayout->addLayout(topBar);
 
     // Grid
@@ -158,6 +178,16 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     });
 
     connect(m_openButton, &QPushButton::clicked, this, [this]{ selectAndLoadFolder(); });
+    connect(m_recordButton, &QPushButton::clicked, this, &PlayerWindow::onRecordingToggle);
+
+    // Recording status timer
+    m_recordingTimer.setInterval(1000); // Update every second
+    connect(&m_recordingTimer, &QTimer::timeout, this, [this](){
+        if (m_isRecording && m_recordingManager) {
+            double duration = m_recordingManager->getRecordingDurationSeconds();
+            m_recordingStatusLabel->setText(QString("Recording: %1s").arg(duration, 0, 'f', 1));
+        }
+    });
 
     connect(m_timelineSlider, &QSlider::valueChanged, this, [this](int v){
         if (!m_dataLoader->isDataReady()) return;
@@ -176,6 +206,12 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
 }
 
 PlayerWindow::~PlayerWindow() {
+    // Stop recording if it's running
+    if (m_isRecording) {
+        stopRecording();
+    }
+    // Clean up recording manager
+    delete m_recordingManager;
     // Data loader will be cleaned up automatically since it's a child object
 }
 
@@ -357,4 +393,95 @@ void PlayerWindow::updateFPS(size_t currentFrame) {
     // Update tracking variables
     m_lastFrameTime = now;
     m_lastFrameIndex = currentFrame;
+}
+
+void PlayerWindow::startRecording() {
+    if (m_isRecording) {
+        return; // Already recording
+    }
+    
+    // Create default recording configuration
+    RecordingManager::RecordingConfig config;
+    // Use default settings for now - could be made configurable via GUI later
+    config.eventFileFormat = "hdf5";
+    config.recordingLengthSeconds = -1; // Indefinite recording
+    
+    // Debug output to compare with CLI
+    std::cout << "GUI Recording Config:" << std::endl;
+    std::cout << "  Event camera serials: " << (config.eventCameraSerials.empty() ? "auto-discovery" : "explicit") << std::endl;
+    std::cout << "  Event file format: " << config.eventFileFormat << std::endl;
+    std::cout << "  Biases provided: " << (config.biases.empty() ? "none (will use defaults)" : "yes") << std::endl;
+    
+    try {
+        if (m_recordingManager->startRecording(config)) {
+            m_isRecording = true;
+            m_recordButton->setText(tr("Stop Recording"));
+            m_recordButton->setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }");
+            m_recordingStatusLabel->setText(tr("Recording: 0.0s"));
+            m_recordingTimer.start();
+            
+            // TODO: Switch to live mode display
+            // This will be implemented in Phase 2 with RecordingBuffer integration
+            
+        } else {
+            QMessageBox::warning(this, tr("Recording Error"), 
+                               tr("Failed to start recording. Please check camera connections."));
+        }
+    } catch (const std::exception& e) {
+        QMessageBox::critical(this, tr("Recording Error"), 
+                            tr("Error starting recording: %1").arg(QString::fromStdString(e.what())));
+    }
+}
+
+void PlayerWindow::stopRecording() {
+    if (!m_isRecording) {
+        return; // Not recording
+    }
+    
+    try {
+        QString recordingDir = QString::fromStdString(m_recordingManager->getCurrentOutputDirectory());
+        m_recordingManager->stopRecording();
+        
+        m_isRecording = false;
+        m_recordButton->setText(tr("Start Recording"));
+        m_recordButton->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
+        m_recordingStatusLabel->setText("");
+        m_recordingTimer.stop();
+        
+        // Auto-load the recorded folder for playback after a short delay
+        // to ensure all files are properly written and closed
+        if (!recordingDir.isEmpty() && QDir(recordingDir).exists()) {
+            QMessageBox::information(this, tr("Recording Complete"), 
+                                   tr("Recording saved to: %1\n\nLoading for playback...").arg(recordingDir));
+            
+            // Add a short delay to ensure all files are properly closed and written
+            QTimer::singleShot(1000, this, [this, recordingDir]() {
+                loadRecording(recordingDir);
+            });
+        }
+        
+    } catch (const std::exception& e) {
+        QMessageBox::critical(this, tr("Recording Error"), 
+                            tr("Error stopping recording: %1").arg(QString::fromStdString(e.what())));
+        // Reset UI state anyway
+        m_isRecording = false;
+        m_recordButton->setText(tr("Start Recording"));
+        m_recordButton->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
+        m_recordingStatusLabel->setText("");
+        m_recordingTimer.stop();
+    }
+}
+
+void PlayerWindow::onRecordingToggle() {
+    if (m_isRecording) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+}
+
+void PlayerWindow::onRecordingStatusUpdate(const QString &message) {
+    // This slot receives status updates from the recording manager
+    // For now, we'll just print to console, but could be used for more detailed status display
+    std::cout << "Recording status: " << message.toStdString() << std::endl;
 }

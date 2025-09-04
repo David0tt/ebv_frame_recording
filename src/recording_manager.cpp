@@ -57,7 +57,10 @@ bool RecordingManager::startRecording(const std::string& outputDirectory, const 
         m_recordingStartTime = std::chrono::steady_clock::now();
         
         // Start recording on both managers
+        notifyStatus("Starting event camera recording...");
         m_eventCameraManager->startRecording(outputDirectory, config.eventFileFormat);
+        
+        notifyStatus("Starting frame camera recording...");
         m_frameCameraManager->startRecording(outputDirectory);
         
         m_recording = true;
@@ -84,8 +87,12 @@ void RecordingManager::stopRecording() {
     notifyStatus("Stopping recording...");
     
     try {
+        notifyStatus("Stopping frame camera recording...");
         m_frameCameraManager->stopRecording();
+        
+        notifyStatus("Stopping event camera recording...");
         m_eventCameraManager->stopRecording();
+        
         m_recording = false;
         
         auto duration = getRecordingDurationSeconds();
@@ -130,6 +137,7 @@ std::vector<EventCameraManager::CameraConfig> RecordingManager::createEventCamer
     
     if (config.eventCameraSerials.empty()) {
         // Return empty vector for auto-discovery
+        notifyStatus("Using event camera auto-discovery (no explicit serials provided)");
         return cameraConfigs;
     }
     

@@ -18,6 +18,9 @@
 #include <atomic>
 #include <chrono>
 
+// Forward declarations
+class RecordingManager;
+
 struct Pane {
     QFrame *frame {nullptr};
     QLabel *content {nullptr};
@@ -32,6 +35,10 @@ public:
     void selectAndLoadFolder();
     void loadRecording(const QString &dirPath);
     void autoLoadIfProvided(const QString &dirPath);
+    
+    // Recording controls
+    void startRecording();
+    void stopRecording();
 
 protected:
     void resizeEvent(QResizeEvent *e) override;
@@ -40,6 +47,8 @@ private slots:
     void onLoadingStarted(const QString &path);
     void onLoadingFinished(bool success, const QString &message);
     void onLoadingProgress(const QString &status);
+    void onRecordingToggle();
+    void onRecordingStatusUpdate(const QString &message);
 
 private:
     void updateDisplays();
@@ -50,6 +59,8 @@ private:
 
     QPushButton *m_openButton {nullptr};
     QLabel *m_pathLabel {nullptr};
+    QPushButton *m_recordButton {nullptr};
+    QLabel *m_recordingStatusLabel {nullptr};
     CachedTimelineSlider *m_timelineSlider {nullptr};
     QPushButton *m_btnBack {nullptr};
     QPushButton *m_btnPlay {nullptr};
@@ -63,6 +74,11 @@ private:
     
     // Data loader
     RecordingLoader *m_dataLoader {nullptr};
+    
+    // Recording manager
+    RecordingManager *m_recordingManager {nullptr};
+    bool m_isRecording {false};
+    QTimer m_recordingTimer;
     
     std::atomic<size_t> m_currentIndex {0};
     double m_assumedFps {30.0};

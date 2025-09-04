@@ -134,15 +134,24 @@ add_executable(video_player
     src/video_player.cpp
     src/player_window.cpp
     src/recording_loader.cpp
+    src/recording_manager.cpp
+    src/event_camera_manager.cpp
+    src/frame_camera_manager.cpp
+    src/utils.cpp
     src/cached_timeline_slider.cpp
     include/player_window.h
     include/recording_loader.h
+    include/recording_manager.h
+    include/event_camera_manager.h
+    include/frame_camera_manager.h
     include/cached_timeline_slider.h
 )
 
 target_include_directories(video_player PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
+    ${IDS_PEAK_INCLUDE_DIR}
+    ${IDS_PEAK_IPL_INCLUDE_DIR}
     ${METAVISION_INCLUDE_DIR}
 )
 
@@ -150,6 +159,8 @@ target_link_libraries(video_player PRIVATE
     ${QT_WIDGETS_LIB}
     ${OpenCV_LIBS}
     Threads::Threads
+    ids_peak
+    ids_peak_ipl
     MetavisionSDK::base
     MetavisionSDK::core
     MetavisionSDK::stream
