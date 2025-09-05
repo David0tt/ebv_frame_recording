@@ -20,20 +20,23 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native")
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra")
 
-# ----------------------------
-# Testing (GoogleTest) Setup
-# ----------------------------
-set(FETCHCONTENT_BASE_DIR ${CMAKE_SOURCE_DIR}/.fcdeps) # set a custom base dir for FetchContent, to enable persistance when removign the build dir
-include(FetchContent)
-set(BUILD_GMOCK OFF CACHE BOOL "Disable GMock" FORCE)
-set(INSTALL_GTEST OFF CACHE BOOL "Disable gtest install" FORCE)
-FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.zip
-)
-FetchContent_MakeAvailable(googletest)
+option(EBV_BUILD_TESTS "Build unit tests" ON)
 
-enable_testing()
+# ----------------------------
+# Testing (GoogleTest) Setup (gated by EBV_BUILD_TESTS)
+# ----------------------------
+if(EBV_BUILD_TESTS)
+    set(FETCHCONTENT_BASE_DIR ${CMAKE_SOURCE_DIR}/.fcdeps) # persist dependencies outside build dir
+    include(FetchContent)
+    set(BUILD_GMOCK OFF CACHE BOOL "Disable GMock" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "Disable gtest install" FORCE)
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.zip
+    )
+    FetchContent_MakeAvailable(googletest)
+    enable_testing()
+endif()
 
 
 # Find required packages
@@ -81,20 +84,19 @@ find_package(MetavisionHAL REQUIRED)
 #     src/utils.cpp
 # )
 
-# Create executable
-add_executable(ebv_frame_recording
-    src/ebv_frame_recording.cpp
+set(CLI11_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/CLI11)
+
+## ----------------------------------------------------------------------------------
+## Core library (non-Qt, reusable for executables and tests)
+## ----------------------------------------------------------------------------------
+add_library(ebv_core STATIC
     src/frame_camera_manager.cpp
     src/event_camera_manager.cpp
     src/recording_manager.cpp
     src/utils.cpp
 )
 
-# add_executable(ebv_frame_recording ${SOURCES})
-
-set(CLI11_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/CLI11)
-
-target_include_directories(ebv_frame_recording PRIVATE 
+target_include_directories(ebv_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
     ${IDS_PEAK_INCLUDE_DIR}
@@ -103,10 +105,7 @@ target_include_directories(ebv_frame_recording PRIVATE
     ${CLI11_INCLUDE_DIR}
 )
 
-
-# Link libraries
-target_link_libraries(
-    ebv_frame_recording PRIVATE
+target_link_libraries(ebv_core PUBLIC
     Threads::Threads
     ids_peak
     ids_peak_ipl
@@ -117,6 +116,17 @@ target_link_libraries(
     MetavisionSDK::ui
     Metavision::HAL
 )
+
+# Main recording executable (small target only containing the entry point)
+add_executable(ebv_frame_recording
+    src/ebv_frame_recording.cpp
+)
+
+target_link_libraries(ebv_frame_recording PRIVATE ebv_core)
+
+set(CLI11_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/CLI11)
+
+target_include_directories(ebv_frame_recording PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 
 
@@ -150,18 +160,11 @@ add_executable(video_player
     src/video_player.cpp
     src/player_window.cpp
     src/recording_loader.cpp
-    src/recording_manager.cpp
-    src/event_camera_manager.cpp
-    src/frame_camera_manager.cpp
-    src/utils.cpp
     src/utils_qt.cpp
     src/recording_buffer.cpp
     src/cached_timeline_slider.cpp
     include/player_window.h
     include/recording_loader.h
-    include/recording_manager.h
-    include/event_camera_manager.h
-    include/frame_camera_manager.h
     include/utils_qt.h
     include/recording_buffer.h
     include/cached_timeline_slider.h
@@ -176,16 +179,9 @@ target_include_directories(video_player PRIVATE
 )
 
 target_link_libraries(video_player PRIVATE 
+    ebv_core
     ${QT_WIDGETS_LIB}
     ${OpenCV_LIBS}
-    Threads::Threads
-    ids_peak
-    ids_peak_ipl
-    MetavisionSDK::base
-    MetavisionSDK::core
-    MetavisionSDK::stream
-    MetavisionSDK::ui
-    Metavision::HAL
 )
 
 set_target_properties(video_player PROPERTIES
@@ -198,7 +194,6 @@ set_target_properties(video_player PROPERTIES
 # # Generic c++
 # ids_peak_deploy(${SAMPLE_TARGET_NAME})
 
-# ----------------------------
-# Tests
-# ----------------------------
-add_subdirectory(tests)
+if(EBV_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
