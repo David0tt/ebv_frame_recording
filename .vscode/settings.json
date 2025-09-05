@@ -9,7 +9,8 @@
         "/^grep\\b/": true,
         "/^head\\b/": true,
         "/^nm\\b/": true,
-        "/^ctest\\b/": true
+        "/^ctest\\b/": true,
+        "/^\\.\/build\/tests\/unit_tests\\b/": true
     },
     "files.associations": {
         "string": "cpp",
