@@ -5,7 +5,7 @@ set(TEST_SOURCES
     test_sanity.cpp
     test_event_bias.cpp
     test_recording_paths.cpp
-    gtest_registration_shim.cpp
+    test_recording_manager_advanced.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES})
@@ -20,7 +20,7 @@ target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-target_link_libraries(unit_tests PRIVATE ebv_core GTest::gtest GTest::gtest_main Threads::Threads)
+target_link_libraries(unit_tests PRIVATE ebv_core GTest::gtest GTest::gmock GTest::gmock_main Threads::Threads)
 
 # Discover tests
 include(GoogleTest)

@@ -7,6 +7,35 @@
 #include <stdexcept>
 #include <thread>
 
+// Adapter implementations to satisfy interface when using concrete managers
+namespace {
+class FrameCameraManagerAdapter : public RecordingManager::IFrameCameraManager {
+public:
+    FrameCameraManagerAdapter() : impl(std::make_unique<FrameCameraManager>()) {}
+    void openAndSetupDevices() override { impl->openAndSetupDevices(); }
+    void startRecording(const std::string& outputPath) override { impl->startRecording(outputPath); }
+    void stopRecording() override { impl->stopRecording(); }
+    void closeDevices() override { impl->closeDevices(); }
+    bool getLatestFrame(int deviceId, FrameData& frameData) override { return impl->getLatestFrame(deviceId, frameData); }
+private:
+    std::unique_ptr<FrameCameraManager> impl;
+};
+
+class EventCameraManagerAdapter : public RecordingManager::IEventCameraManager {
+public:
+    EventCameraManagerAdapter() : impl(std::make_unique<EventCameraManager>()) {}
+    void openAndSetupDevices(const std::vector<CameraConfig>& cameraConfigs) override { impl->openAndSetupDevices(cameraConfigs); }
+    void startRecording(const std::string& outputPath, const std::string& fileFormat) override { impl->startRecording(outputPath, fileFormat); }
+    void stopRecording() override { impl->stopRecording(); }
+    void closeDevices() override { impl->closeDevices(); }
+    bool startLiveStreaming() override { return impl->startLiveStreaming(); }
+    void stopLiveStreaming() override { impl->stopLiveStreaming(); }
+    bool getLatestEventFrame(int cameraId, cv::Mat& eventFrame, size_t& frameIndex) override { return impl->getLatestEventFrame(cameraId, eventFrame, frameIndex); }
+private:
+    std::unique_ptr<EventCameraManager> impl;
+};
+} // namespace
+
 // Default bias values
 const std::unordered_map<std::string, int> RecordingManager::DEFAULT_BIASES = {
     {"bias_diff_on", 0}, 
@@ -17,17 +46,22 @@ const std::unordered_map<std::string, int> RecordingManager::DEFAULT_BIASES = {
 };
 
 RecordingManager::RecordingManager() 
-    : m_frameCameraManager(std::make_unique<FrameCameraManager>())
-    , m_eventCameraManager(std::make_unique<EventCameraManager>())
-{
+    : m_frameCameraManager(std::make_unique<FrameCameraManagerAdapter>())
+    , m_eventCameraManager(std::make_unique<EventCameraManagerAdapter>()) {
+}
+
+RecordingManager::RecordingManager(std::unique_ptr<IFrameCameraManager> frameMgr,
+                                   std::unique_ptr<IEventCameraManager> eventMgr)
+    : m_frameCameraManager(std::move(frameMgr))
+    , m_eventCameraManager(std::move(eventMgr)) {
 }
 
 RecordingManager::~RecordingManager() {
     if (m_recording) {
-        stopRecording();
+        try { stopRecording(); } catch (...) {}
     }
-    // Close devices to release resources
-    closeDevices();
+    // Avoid invoking closeDevices() here to prevent double cleanup in test + production;
+    // unique_ptr destructors will release resources safely.
 }
 
 bool RecordingManager::configure(const RecordingConfig& config) {
@@ -138,14 +172,17 @@ void RecordingManager::stopRecording() {
     try {
         // Stop frame camera recording first (typically faster to stop)
         notifyStatus("Stopping frame camera recording...");
-        m_frameCameraManager->stopRecording();
+        if (m_frameCameraManager) {
+            m_frameCameraManager->stopRecording();
+        }
         
         // Stop event camera recording and ensure flushing
         notifyStatus("Stopping event camera recording and flushing data...");
-        m_eventCameraManager->stopRecording();
-        
-        // Stop live streaming
-        m_eventCameraManager->stopLiveStreaming();
+        if (m_eventCameraManager) {
+            m_eventCameraManager->stopRecording();
+            // Stop live streaming
+            m_eventCameraManager->stopLiveStreaming();
+        }
         
         // Give extra time for buffers to flush to disk
         notifyStatus("Waiting for data flush to complete...");
@@ -175,10 +212,10 @@ void RecordingManager::closeDevices() {
         }
         
         // Close event cameras
-        m_eventCameraManager->closeDevices();
+    if (m_eventCameraManager) m_eventCameraManager->closeDevices();
         
-        // Close frame cameras  
-        m_frameCameraManager->closeDevices();
+    // Close frame cameras
+    if (m_frameCameraManager) m_frameCameraManager->closeDevices();
         
         m_configured = false;
         notifyStatus("All camera resources released successfully");

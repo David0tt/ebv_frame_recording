@@ -12,6 +12,27 @@
 
 class RecordingManager {
 public:
+    // Abstract interfaces to enable mocking in tests (Phase 3)
+    struct IFrameCameraManager {
+        virtual ~IFrameCameraManager() = default;
+        virtual void openAndSetupDevices() = 0;
+        virtual void startRecording(const std::string& outputPath) = 0;
+        virtual void stopRecording() = 0;
+        virtual void closeDevices() = 0;
+        virtual bool getLatestFrame(int deviceId, FrameData& frameData) = 0;
+    };
+    struct IEventCameraManager {
+    using BiasConfig = std::unordered_map<std::string,int>;
+    using CameraConfig = EventCameraManager::CameraConfig; // reuse concrete struct for simplicity
+        virtual ~IEventCameraManager() = default;
+        virtual void openAndSetupDevices(const std::vector<CameraConfig>& cameraConfigs) = 0;
+        virtual void startRecording(const std::string& outputPath, const std::string& fileFormat) = 0;
+        virtual void stopRecording() = 0;
+        virtual void closeDevices() = 0;
+        virtual bool startLiveStreaming() = 0;
+        virtual void stopLiveStreaming() = 0;
+        virtual bool getLatestEventFrame(int cameraId, cv::Mat& eventFrame, size_t& frameIndex) = 0;
+    };
     // Configuration structure for recording
     struct RecordingConfig {
         std::vector<std::string> eventCameraSerials;
@@ -25,6 +46,9 @@ public:
     using StatusCallback = std::function<void(const std::string& message)>;
 
     RecordingManager();
+    // Dependency injection constructor for tests
+    RecordingManager(std::unique_ptr<IFrameCameraManager> frameMgr,
+                     std::unique_ptr<IEventCameraManager> eventMgr);
     ~RecordingManager();
 
     // Configuration interface - must be called before recording
@@ -68,8 +92,9 @@ private:
     void notifyStatus(const std::string& message) const;
     
     // Camera managers
-    std::unique_ptr<FrameCameraManager> m_frameCameraManager;
-    std::unique_ptr<EventCameraManager> m_eventCameraManager;
+    // Use abstract pointers to allow substitution with mocks
+    std::unique_ptr<IFrameCameraManager> m_frameCameraManager;
+    std::unique_ptr<IEventCameraManager> m_eventCameraManager;
     
     // Recording state
     std::atomic<bool> m_recording{false};

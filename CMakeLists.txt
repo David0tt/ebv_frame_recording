@@ -28,7 +28,7 @@ option(EBV_BUILD_TESTS "Build unit tests" ON)
 if(EBV_BUILD_TESTS)
     set(FETCHCONTENT_BASE_DIR ${CMAKE_SOURCE_DIR}/.fcdeps) # persist dependencies outside build dir
     include(FetchContent)
-    set(BUILD_GMOCK OFF CACHE BOOL "Disable GMock" FORCE)
+    set(BUILD_GMOCK ON CACHE BOOL "Enable GMock" FORCE)
     set(INSTALL_GTEST OFF CACHE BOOL "Disable gtest install" FORCE)
     FetchContent_Declare(
         googletest
