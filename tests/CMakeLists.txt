@@ -20,7 +20,8 @@ target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-target_link_libraries(unit_tests PRIVATE ebv_core GTest::gtest GTest::gmock GTest::gmock_main Threads::Threads)
+find_package(Qt6 COMPONENTS Core REQUIRED)
+target_link_libraries(unit_tests PRIVATE ebv_core GTest::gtest GTest::gmock GTest::gmock_main Qt6::Core Threads::Threads)
 
 # Discover tests
 include(GoogleTest)
