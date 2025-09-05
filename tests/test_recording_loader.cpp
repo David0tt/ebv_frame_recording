@@ -1,7 +1,7 @@
 // Tests for RecordingLoader using temporary on-disk structure
 #include <gtest/gtest.h>
 #include <QCoreApplication>
-#include <QSignalSpy>
+#include <atomic>
 #include "recording_loader.h"
 #include <filesystem>
 #include <opencv2/opencv.hpp>
@@ -26,16 +26,17 @@ TEST(RecordingLoaderBasic, LoadsFrameOnlyRecording) {
 
     auto dir = createTempRecordingDir();
     RecordingLoader loader;
-    QSignalSpy finishedSpy(&loader, &RecordingLoader::loadingFinished);
+    std::atomic<int> finishedCount{0};
+    QObject::connect(&loader, &RecordingLoader::loadingFinished, [&finishedCount](bool, const QString&){ finishedCount++; });
     loader.loadRecording(dir.string());
 
     // Spin event loop until finished or timeout
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (finishedSpy.count()==0 && std::chrono::steady_clock::now() < deadline) {
+    while (finishedCount.load()==0 && std::chrono::steady_clock::now() < deadline) {
         QCoreApplication::processEvents();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    ASSERT_GT(finishedSpy.count(), 0) << "Loading did not finish in time";
+    ASSERT_GT(finishedCount.load(), 0) << "Loading did not finish in time";
     ASSERT_TRUE(loader.isDataReady());
     const auto &data = loader.getData();
     EXPECT_TRUE(data.isValid);
@@ -48,13 +49,14 @@ TEST(RecordingLoaderBasic, LoadsFrameOnlyRecording) {
 TEST(RecordingLoaderBasic, MissingDirectoryFailsGracefully) {
     int argc = 0; char** argv = nullptr; if (!QCoreApplication::instance()) { new QCoreApplication(argc, argv); }
     RecordingLoader loader;
-    QSignalSpy finishedSpy(&loader, &RecordingLoader::loadingFinished);
+    std::atomic<int> finishedCount{0};
+    QObject::connect(&loader, &RecordingLoader::loadingFinished, [&finishedCount](bool, const QString&){ finishedCount++; });
     loader.loadRecording("/nonexistent/path/that/should/not/exist_12345");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (finishedSpy.count()==0 && std::chrono::steady_clock::now() < deadline) {
+    while (finishedCount.load()==0 && std::chrono::steady_clock::now() < deadline) {
         QCoreApplication::processEvents();
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    ASSERT_GT(finishedSpy.count(), 0);
+    ASSERT_GT(finishedCount.load(), 0);
     EXPECT_FALSE(loader.isDataReady());
 }

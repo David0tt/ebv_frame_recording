@@ -12,9 +12,7 @@ namespace fs = std::filesystem;
 // Minimal fake RecordingManager implementing only the methods used by RecordingBuffer live mode
 class FakeLiveRecordingManager : public RecordingManager {
 public:
-    FakeLiveRecordingManager() : RecordingManager(nullptr, nullptr) {
-        m_recording = true; // force isRecording() to true
-    }
+    FakeLiveRecordingManager() : RecordingManager(nullptr, nullptr) {}
     // Public toggles to feed frames
     void pushFrame(int cam, const cv::Mat &img) {
         std::lock_guard<std::mutex> l(mutex_);
