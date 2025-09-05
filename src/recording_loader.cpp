@@ -1,4 +1,5 @@
 #include "recording_loader.h"
+#include "utils_qt.h"
 
 #include <QMetaObject>
 #include <QString>
@@ -12,24 +13,6 @@
 #include <cmath>
 
 // Utility function implementations
-QImage cvMatToQImage(const cv::Mat &mat) {
-    if (mat.empty()) return {};
-    cv::Mat rgb;
-    switch (mat.type()) {
-        case CV_8UC1:
-            cv::cvtColor(mat, rgb, cv::COLOR_GRAY2RGBA);
-            break;
-        case CV_8UC3:
-            cv::cvtColor(mat, rgb, cv::COLOR_BGR2RGBA);
-            break;
-        case CV_8UC4:
-            rgb = mat.clone();
-            break;
-        default:
-            return {};
-    }
-    return QImage(rgb.data, rgb.cols, rgb.rows, static_cast<int>(rgb.step), QImage::Format_RGBA8888).copy();
-}
 
 long long extract_frame_index(const std::string &pathStr) {
     auto filenamePos = pathStr.find_last_of("/\\");

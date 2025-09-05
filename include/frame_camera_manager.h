@@ -28,6 +28,9 @@ public:
     void startRecording(const std::string& outputPath);
     void stopRecording();
     void closeDevices(); // Close and release all camera resources
+    
+    // Live data access for recording buffer
+    bool getLatestFrame(int deviceId, FrameData& frameData);
 
 private:
     void setupDevice(std::shared_ptr<peak::core::Device> device);

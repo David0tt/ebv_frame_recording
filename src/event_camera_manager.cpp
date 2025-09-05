@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <metavision/sdk/stream/camera_exception.h>
 #include <metavision/hal/device/device_discovery.h>
+#include <opencv2/opencv.hpp>
 
 const std::unordered_map<std::string, BiasLimits> EventCameraManager::DEFAULT_BIAS_LIMITS = {
     {"bias_diff_on", {-85, 140}},
@@ -29,6 +30,7 @@ EventCameraManager::EventCameraManager() : m_recording(false) {
 }
 
 EventCameraManager::~EventCameraManager() {
+    stopLiveStreaming();
     stopRecording();
 }
 
@@ -52,6 +54,15 @@ void EventCameraManager::openAndSetupDevices(const std::vector<CameraConfig>& ca
             auto camera = std::make_unique<Metavision::Camera>(Metavision::Camera::from_serial(serial));
             setupDevice(camera, isMaster, biases);
             m_cameras.push_back(std::move(camera));
+        }
+        
+        // Initialize live streaming structures
+        m_liveEventBuffers.resize(m_cameras.size());
+        m_eventBufferMutexes.resize(m_cameras.size());
+        m_eventFrameCounters.resize(m_cameras.size());
+        for (size_t i = 0; i < m_cameras.size(); ++i) {
+            m_eventBufferMutexes[i] = std::make_unique<std::mutex>();
+            m_eventFrameCounters[i] = 0;
         }
         
         std::cout << "Successfully opened and configured " << m_cameras.size() 
@@ -271,4 +282,175 @@ bool EventCameraManager::validateBiasLimits(const std::string& biasName, int val
                  << ", " << it->second.max_value << "]" << std::endl;
     }
     return isValid;
+}
+
+bool EventCameraManager::startLiveStreaming() {
+    if (m_cameras.empty()) {
+        std::cerr << "Error: No cameras opened for live streaming" << std::endl;
+        return false;
+    }
+    
+    if (m_liveStreaming) {
+        return true; // Already streaming
+    }
+    
+    try {
+        // Initialize buffers and counters for each camera
+        m_liveEventBuffers.resize(m_cameras.size());
+        m_eventBufferMutexes.resize(m_cameras.size());
+        m_eventFrameCounters.resize(m_cameras.size(), 0);
+        
+        // Start streaming threads for each camera
+        m_liveStreaming = true;
+        for (size_t i = 0; i < m_cameras.size(); ++i) {
+            m_eventStreamingThreads.emplace_back(&EventCameraManager::eventStreamingWorker, this, i);
+        }
+        
+        std::cout << "Started live streaming for " << m_cameras.size() << " event cameras" << std::endl;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error starting live streaming: " << e.what() << std::endl;
+        m_liveStreaming = false;
+        return false;
+    }
+}
+
+void EventCameraManager::stopLiveStreaming() {
+    if (!m_liveStreaming) {
+        return;
+    }
+    
+    m_liveStreaming = false;
+    
+    // Wait for all streaming threads to finish
+    for (auto& thread : m_eventStreamingThreads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+    m_eventStreamingThreads.clear();
+    
+    // Clear buffers
+    for (auto& buffer : m_liveEventBuffers) {
+        while (!buffer.empty()) {
+            buffer.pop();
+        }
+    }
+    m_liveEventBuffers.clear();
+    m_eventBufferMutexes.clear();
+    m_eventFrameCounters.clear();
+    
+        
+    std::cout << "Stopped live streaming for event cameras" << std::endl;
+}
+
+void EventCameraManager::eventStreamingWorker(int cameraId) {
+    if (cameraId >= static_cast<int>(m_cameras.size())) {
+        return;
+    }
+    
+    std::vector<Metavision::EventCD> eventBuffer;
+    eventBuffer.reserve(100000); // Reserve space for events
+    
+    auto lastFrameTime = std::chrono::steady_clock::now();
+    const auto frameInterval = std::chrono::duration<double>(1.0 / EVENT_FRAME_RATE);
+    
+    // Add callback to collect events
+    auto callbackId = m_cameras[cameraId]->cd().add_callback(
+        [&eventBuffer](const Metavision::EventCD* begin, const Metavision::EventCD* end) {
+            for (auto it = begin; it != end; ++it) {
+                eventBuffer.push_back(*it);
+            }
+        }
+    );
+    
+    try {
+        while (m_liveStreaming) {
+            auto currentTime = std::chrono::steady_clock::now();
+            
+            // Check if it's time to generate a new frame
+            if (currentTime - lastFrameTime >= frameInterval) {
+                if (!eventBuffer.empty()) {
+                    // Generate frame from accumulated events
+                    cv::Mat frame = generateEventFrame(eventBuffer, EVENT_FRAME_WIDTH, EVENT_FRAME_HEIGHT);
+                    
+                    // Create frame data
+                    EventFrameData frameData;
+                    frameData.frame = frame.clone(); // Clone to ensure thread safety
+                    frameData.cameraId = cameraId;
+                    frameData.frameIndex = m_eventFrameCounters[cameraId]++;
+                    frameData.timestamp = currentTime;
+                    frameData.isValid = !frame.empty();
+                    
+                    // Add to buffer
+                    {
+                        std::lock_guard<std::mutex> lock(*m_eventBufferMutexes[cameraId]);
+                        m_liveEventBuffers[cameraId].push(frameData);
+                        
+                        // Keep buffer size under control
+                        while (m_liveEventBuffers[cameraId].size() > MAX_EVENT_BUFFER_SIZE) {
+                            m_liveEventBuffers[cameraId].pop();
+                        }
+                    }
+                    
+                    // Clear event buffer for next frame
+                    eventBuffer.clear();
+                }
+                
+                lastFrameTime = currentTime;
+            }
+            
+            // Sleep briefly to avoid busy waiting
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error in event streaming worker " << cameraId << ": " << e.what() << std::endl;
+    }
+    
+    // Remove callback
+    if (m_cameras[cameraId]) {
+        m_cameras[cameraId]->cd().remove_callback(callbackId);
+    }
+}
+
+cv::Mat EventCameraManager::generateEventFrame(const std::vector<Metavision::EventCD>& events, int width, int height) {
+    // Create accumulation frame
+    cv::Mat frame = cv::Mat::zeros(height, width, CV_8UC3);
+    
+    // Background color (dark gray)
+    frame.setTo(cv::Scalar(64, 64, 64));
+    
+    // Accumulate events with simple visualization
+    for (const auto& event : events) {
+        if (event.x >= 0 && event.x < width && event.y >= 0 && event.y < height) {
+            cv::Vec3b& pixel = frame.at<cv::Vec3b>(event.y, event.x);
+            if (event.p == 1) { // Positive event (white)
+                pixel[0] = 255; pixel[1] = 255; pixel[2] = 255;
+            } else { // Negative event (blue)  
+                pixel[0] = 255; pixel[1] = 0; pixel[2] = 0; // BGR format: Blue=255, Green=0, Red=0
+            }
+        }
+    }
+    
+    return frame;
+}
+
+bool EventCameraManager::getLatestEventFrame(int cameraId, cv::Mat& eventFrame, size_t& frameIndex) {
+    if (cameraId < 0 || static_cast<size_t>(cameraId) >= m_cameras.size() || !m_liveStreaming) {
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(*m_eventBufferMutexes[cameraId]);
+    
+    if (m_liveEventBuffers[cameraId].empty()) {
+        return false;
+    }
+    
+    // Get the most recent frame
+    EventFrameData latestFrame = m_liveEventBuffers[cameraId].back();
+    eventFrame = latestFrame.frame.clone(); // Clone to ensure thread safety
+    frameIndex = latestFrame.frameIndex;
+    
+    return latestFrame.isValid;
 }

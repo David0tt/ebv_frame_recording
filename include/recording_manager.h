@@ -51,6 +51,10 @@ public:
     
     // Graceful shutdown support
     void setShutdownFlag(std::atomic<bool>* shutdownFlag) { m_shutdownFlag = shutdownFlag; }
+    
+    // Live data access for recording buffer
+    bool getLiveFrameData(int cameraId, cv::Mat& frame, size_t& frameIndex);
+    bool getLiveEventData(int cameraId, cv::Mat& eventFrame, size_t& frameIndex);
 
 private:
     std::string generateOutputDirectory(const std::string& prefix = "") const;

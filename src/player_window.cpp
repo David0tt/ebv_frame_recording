@@ -17,6 +17,7 @@
 #include <QMetaObject>
 #include "recording_manager.h"
 #include "recording_loader.h" // for cvMatToQImage utility function
+#include "utils_qt.h"
 
 #include <filesystem>
 #include <algorithm>
@@ -56,6 +57,19 @@ PlayerWindow::PlayerWindow(QWidget *parent) : QWidget(parent) {
     connect(m_dataLoader, &RecordingLoader::loadingStarted, this, &PlayerWindow::onLoadingStarted);
     connect(m_dataLoader, &RecordingLoader::loadingFinished, this, &PlayerWindow::onLoadingFinished);
     connect(m_dataLoader, &RecordingLoader::loadingProgress, this, &PlayerWindow::onLoadingProgress);
+
+    // Initialize recording buffer
+    m_recordingBuffer = new RecordingBuffer(this);
+    connect(m_recordingBuffer, &RecordingBuffer::liveDataAvailable, this, [this](const UnifiedFrameData&) {
+        if (m_isRecording) {
+            updateDisplays();
+        }
+    });
+    connect(m_recordingBuffer, &RecordingBuffer::frameDataUpdated, this, [this](size_t) {
+        if (!m_isRecording) {  // Only update during playback
+            updateDisplays();
+        }
+    });
 
     // Initialize recording manager
     m_recordingManager = new RecordingManager();
@@ -280,6 +294,9 @@ void PlayerWindow::onLoadingFinished(bool success, const QString &message) {
         const auto &data = m_dataLoader->getData();
         m_timelineSlider->setRange(0, static_cast<int>(data.totalFrames - 1));
         
+        // Switch recording buffer to playback mode
+        m_recordingBuffer->setPlaybackMode(m_dataLoader);
+        
         // Start prefetching from frame 0
         m_dataLoader->notifyFrameChanged(0);
         
@@ -297,6 +314,41 @@ void PlayerWindow::onLoadingProgress(const QString &status) {
 }
 
 void PlayerWindow::updateDisplays() {
+    // Check if we're in live recording mode
+    if (m_isRecording && m_recordingBuffer && m_recordingBuffer->getCurrentMode() == RecordingBuffer::Mode::Live) {
+        // Use live data from recording buffer
+        UnifiedFrameData liveData = m_recordingBuffer->getLatestLiveData();
+        
+        if (liveData.isValid) {
+            // Frame cameras
+            for (int cam = 0; cam < 2 && cam < static_cast<int>(liveData.frameData.size()); ++cam) {
+                const auto& frameData = liveData.frameData[cam];
+                if (frameData.isValid && !frameData.image.empty()) {
+                    QPixmap pm = QPixmap::fromImage(cvMatToQImage(frameData.image)).scaled(
+                        m_panes[cam].content->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    m_panes[cam].content->setPixmap(pm);
+                } else {
+                    m_panes[cam].content->setText("(live: no frame)");
+                }
+            }
+            
+            // Event cameras
+            for (int cam = 0; cam < 2 && cam < static_cast<int>(liveData.eventData.size()); ++cam) {
+                int paneIndex = 2 + cam; // bottom row
+                const auto& eventData = liveData.eventData[cam];
+                if (eventData.isValid && !eventData.frame.isNull()) {
+                    QPixmap pm = QPixmap::fromImage(eventData.frame).scaled(
+                        m_panes[paneIndex].content->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    m_panes[paneIndex].content->setPixmap(pm);
+                } else {
+                    m_panes[paneIndex].content->setText("(live: no events)");
+                }
+            }
+        }
+        return;
+    }
+    
+    // Normal playback mode using data loader
     if (!m_dataLoader->isDataReady()) return;
     
     size_t idx = m_currentIndex;
@@ -444,8 +496,8 @@ void PlayerWindow::startRecording() {
             m_recordingStatusLabel->setText(tr("Recording: 0.0s"));
             m_recordingTimer.start();
             
-            // TODO: Switch to live mode display
-            // This will be implemented in Phase 2 with RecordingBuffer integration
+            // Switch recording buffer to live mode
+            m_recordingBuffer->setLiveMode(m_recordingManager);
             
         } else {
             QMessageBox::warning(this, tr("Recording Error"), 
@@ -475,6 +527,9 @@ void PlayerWindow::stopRecording() {
         m_recordButton->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
         m_recordingStatusLabel->setText("");
         m_recordingTimer.stop();
+        
+        // Stop recording buffer live mode
+        m_recordingBuffer->stop();
         
         // Auto-load the recorded folder for playback after a short delay
         // to ensure all files are properly written and closed

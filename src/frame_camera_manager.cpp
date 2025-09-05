@@ -284,3 +284,32 @@ void FrameCameraManager::closeDevices() {
     }
 }
 
+bool FrameCameraManager::getLatestFrame(int deviceId, FrameData& frameData) {
+    if (!m_acquiring || deviceId < 0 || deviceId >= static_cast<int>(m_devices.size())) {
+        return false;
+    }
+    
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    
+    // Find the most recent frame for this device
+    auto tempQueue = m_frameQueue;
+    bool found = false;
+    FrameData latestFrame;
+    
+    while (!tempQueue.empty()) {
+        auto frame = tempQueue.front();
+        tempQueue.pop();
+        if (frame.deviceId == deviceId) {
+            latestFrame = frame;
+            found = true;
+        }
+    }
+    
+    if (found) {
+        frameData = latestFrame;
+        return true;
+    }
+    
+    return false;
+}
+

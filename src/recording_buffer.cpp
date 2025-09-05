@@ -1,5 +1,6 @@
 #include "recording_buffer.h"
 #include "recording_loader.h"
+#include "utils_qt.h"
 // Note: RecordingManager is included here to access its methods, but not in header
 #include "recording_manager.h"
 #include <iostream>
@@ -270,47 +271,56 @@ void RecordingBuffer::liveBufferWorker() {
 }
 
 void RecordingBuffer::processLiveFrameData() {
-    // This is a placeholder for processing live frame data
-    // In a real implementation, this would interface with the FrameCameraManager
-    // to get the latest frames and add them to the buffer
-    
-    // TODO: Implement interface to get live frame data from RecordingManager
-    // For now, create dummy data to test the structure
+    // Get live frame data from RecordingManager
+    RecordingManager* manager = static_cast<RecordingManager*>(m_recordingManager);
+    if (!manager) {
+        return;
+    }
     
     std::lock_guard<std::mutex> lock(m_liveBufferMutex);
     
-    // Simulate receiving frame data (this would be replaced with actual camera data)
+    // Get frames from both frame cameras
     for (int camera = 0; camera < 2; ++camera) {
-        BufferedFrameData frameData;
-        frameData.cameraId = camera;
-        frameData.frameIndex = m_currentFrameIndex;
-        frameData.timestamp = std::chrono::steady_clock::now();
-        frameData.isValid = true;
-        // frameData.image would be populated with actual camera data
+        cv::Mat frame;
+        size_t frameIndex;
         
-        m_liveFrameBuffer.push(frameData);
+        if (manager->getLiveFrameData(camera, frame, frameIndex)) {
+            BufferedFrameData frameData;
+            frameData.image = frame;
+            frameData.cameraId = camera;
+            frameData.frameIndex = frameIndex;
+            frameData.timestamp = std::chrono::steady_clock::now();
+            frameData.isValid = true;
+            
+            m_liveFrameBuffer.push(frameData);
+        }
     }
 }
 
 void RecordingBuffer::processLiveEventData() {
-    // This is a placeholder for processing live event data
-    // In a real implementation, this would interface with the EventCameraManager
-    // to get the latest event frames and add them to the buffer
-    
-    // TODO: Implement interface to get live event data from RecordingManager
+    // Get live event data from RecordingManager
+    RecordingManager* manager = static_cast<RecordingManager*>(m_recordingManager);
+    if (!manager) {
+        return;
+    }
     
     std::lock_guard<std::mutex> lock(m_liveBufferMutex);
     
-    // Simulate receiving event data (this would be replaced with actual camera data)
+    // Get event frames from both event cameras
     for (int camera = 0; camera < 2; ++camera) {
-        BufferedEventData eventData;
-        eventData.cameraId = camera;
-        eventData.frameIndex = m_currentFrameIndex;
-        eventData.timestamp = std::chrono::steady_clock::now();
-        eventData.isValid = true;
-        // eventData.frame would be populated with actual event frame data
+        cv::Mat eventMat;
+        size_t frameIndex;
         
-        m_liveEventBuffer.push(eventData);
+        if (manager->getLiveEventData(camera, eventMat, frameIndex)) {
+            BufferedEventData eventData;
+            eventData.frame = cvMatToQImage(eventMat); // Convert cv::Mat to QImage
+            eventData.cameraId = camera;
+            eventData.frameIndex = frameIndex;
+            eventData.timestamp = std::chrono::steady_clock::now();
+            eventData.isValid = !eventMat.empty();
+            
+            m_liveEventBuffer.push(eventData);
+        }
     }
 }
 

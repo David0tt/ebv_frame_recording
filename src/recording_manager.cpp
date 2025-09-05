@@ -93,6 +93,11 @@ bool RecordingManager::startRecording(const std::string& outputDirectory) {
         notifyStatus("Starting frame camera recording...");
         m_frameCameraManager->startRecording(outputDirectory);
         
+        // Start live streaming for both cameras
+        if (!m_eventCameraManager->startLiveStreaming()) {
+            notifyStatus("Warning: Failed to start event camera live streaming");
+        }
+        
         m_recording = true;
         
         if (m_currentConfig.recordingLengthSeconds > 0) {
@@ -138,6 +143,9 @@ void RecordingManager::stopRecording() {
         // Stop event camera recording and ensure flushing
         notifyStatus("Stopping event camera recording and flushing data...");
         m_eventCameraManager->stopRecording();
+        
+        // Stop live streaming
+        m_eventCameraManager->stopLiveStreaming();
         
         // Give extra time for buffers to flush to disk
         notifyStatus("Waiting for data flush to complete...");
@@ -257,4 +265,27 @@ void RecordingManager::notifyStatus(const std::string& message) const {
         // Default behavior: print to console
         std::cout << message << std::endl;
     }
+}
+
+bool RecordingManager::getLiveFrameData(int cameraId, cv::Mat& frame, size_t& frameIndex) {
+    if (!m_recording || !m_frameCameraManager) {
+        return false;
+    }
+    
+    FrameData frameData;
+    if (m_frameCameraManager->getLatestFrame(cameraId, frameData)) {
+        frame = frameData.image;
+        frameIndex = frameData.frameIndex;
+        return true;
+    }
+    
+    return false;
+}
+
+bool RecordingManager::getLiveEventData(int cameraId, cv::Mat& eventFrame, size_t& frameIndex) {
+    if (!m_recording || !m_eventCameraManager) {
+        return false;
+    }
+    
+    return m_eventCameraManager->getLatestEventFrame(cameraId, eventFrame, frameIndex);
 }

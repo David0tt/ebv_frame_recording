@@ -12,6 +12,7 @@
 
 #include <opencv2/opencv.hpp>
 #include "recording_loader.h"
+#include "recording_buffer.h"
 #include "cached_timeline_slider.h"
 
 #include <vector>
@@ -76,6 +77,9 @@ private:
     
     // Data loader
     RecordingLoader *m_dataLoader {nullptr};
+    
+    // Recording buffer for unified data access
+    RecordingBuffer *m_recordingBuffer {nullptr};
     
     // Recording manager
     RecordingManager *m_recordingManager {nullptr};

@@ -138,12 +138,16 @@ add_executable(video_player
     src/event_camera_manager.cpp
     src/frame_camera_manager.cpp
     src/utils.cpp
+    src/utils_qt.cpp
+    src/recording_buffer.cpp
     src/cached_timeline_slider.cpp
     include/player_window.h
     include/recording_loader.h
     include/recording_manager.h
     include/event_camera_manager.h
     include/frame_camera_manager.h
+    include/utils_qt.h
+    include/recording_buffer.h
     include/cached_timeline_slider.h
 )
 
