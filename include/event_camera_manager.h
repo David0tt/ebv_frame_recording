@@ -51,6 +51,41 @@ public:
     void stopLiveStreaming();
     bool getLatestEventFrame(int cameraId, cv::Mat& eventFrame, size_t& frameIndex);
 
+    // ---- Test helper accessors (Phase 2) ----
+    // Inline static default maps (header-only for unit test linking without .cpp)
+    inline static const std::unordered_map<std::string, BiasLimits> DEFAULT_BIAS_LIMITS = {
+        {"bias_diff_on", {-85, 140}},
+        {"bias_diff_off", {-35, 190}},
+        {"bias_fo", {-35, 55}},
+        {"bias_hpf", {0, 120}},
+        {"bias_refr", {-20, 235}}
+    };
+    inline static const std::unordered_map<std::string, int> DEFAULT_BIASES = {
+        {"bias_diff_on", 0},
+        {"bias_diff_off", 0},
+        {"bias_fo", 0},
+        {"bias_hpf", 0},
+        {"bias_refr", 0}
+    };
+    static const std::unordered_map<std::string, BiasLimits>& getDefaultBiasLimits() { return DEFAULT_BIAS_LIMITS; }
+    static const std::unordered_map<std::string, int>& getDefaultBiases() { return DEFAULT_BIASES; }
+    // Expose validation helpers for pure unit testing (no camera needed)
+    static bool testValidateBiasLimits(const std::string& name, int value) {
+        const auto it = DEFAULT_BIAS_LIMITS.find(name);
+        if (it == DEFAULT_BIAS_LIMITS.end()) return true; // mimic production forgiving behavior
+        return value >= it->second.min_value && value <= it->second.max_value;
+    }
+    template<typename Map>
+    static std::unordered_map<std::string,int> testClipBiasValues(const Map& input) {
+        std::unordered_map<std::string,int> out(input.begin(), input.end());
+        for (auto & kv : out) {
+            auto it = DEFAULT_BIAS_LIMITS.find(kv.first);
+            if (it == DEFAULT_BIAS_LIMITS.end()) continue;
+            kv.second = std::clamp(kv.second, it->second.min_value, it->second.max_value);
+        }
+        return out;
+    }
+
 private:
     void setupDevice(std::unique_ptr<Metavision::Camera>& camera, bool isMaster, const BiasConfig& biases);
     void setBiases(std::unique_ptr<Metavision::Camera>& camera, const BiasConfig& biases);
@@ -60,8 +95,7 @@ private:
     BiasConfig clipBiasValues(const BiasConfig& biases);
     bool validateBiasLimits(const std::string& biasName, int value);
     
-    static const std::unordered_map<std::string, BiasLimits> DEFAULT_BIAS_LIMITS;
-    static const std::unordered_map<std::string, int> DEFAULT_BIASES;
+    // (Inline static maps defined above; no separate declarations needed)
 
     std::vector<std::unique_ptr<Metavision::Camera>> m_cameras; // index 0 master, rest slaves
     std::atomic<bool> m_recording;

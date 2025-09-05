@@ -1,11 +1,15 @@
 {
+    // all of these commands are safe to run without user approval, since they are non-destructive
     "chat.tools.terminal.autoApprove": {
        "/^ninja\\b/": true,
-       "cd": true,
+       "/^cd\\b/": true,
+       "/^ls\\b/": true,
+       "/^file\\b/": true,
        "/^cmake\\b/": true,
         "/^grep\\b/": true,
         "/^head\\b/": true,
-        "/^nm\\b/": true
+        "/^nm\\b/": true,
+        "/^ctest\\b/": true
     },
     "files.associations": {
         "string": "cpp",

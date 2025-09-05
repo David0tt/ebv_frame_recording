@@ -45,6 +45,11 @@ public:
     std::string getCurrentOutputDirectory() const { return m_currentOutputDir; }
     std::chrono::steady_clock::time_point getRecordingStartTime() const { return m_recordingStartTime; }
     double getRecordingDurationSeconds() const;
+
+    // ---- Test helpers (Phase 2) ----
+    // Exposes private timestamped directory generation for unit tests without
+    // changing production call sites. Safe: pure function of current time + prefix.
+    std::string testGenerateOutputDirectory(const std::string& prefix) const { return generateOutputDirectory(prefix); }
     
     // Callbacks for status updates
     void setStatusCallback(StatusCallback callback) { m_statusCallback = callback; }

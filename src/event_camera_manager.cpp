@@ -7,21 +7,7 @@
 #include <metavision/hal/device/device_discovery.h>
 #include <opencv2/opencv.hpp>
 
-const std::unordered_map<std::string, BiasLimits> EventCameraManager::DEFAULT_BIAS_LIMITS = {
-    {"bias_diff_on", {-85, 140}},
-    {"bias_diff_off", {-35, 190}},
-    {"bias_fo", {-35, 55}},
-    {"bias_hpf", {0, 120}},
-    {"bias_refr", {-20, 235}}
-};
-
-const std::unordered_map<std::string, int> EventCameraManager::DEFAULT_BIASES = {
-    {"bias_diff_on", 0},
-    {"bias_diff_off", 0},
-    {"bias_fo", 0},
-    {"bias_hpf", 0},
-    {"bias_refr", 0}
-};
+// Static bias maps moved to header as inline definitions for testability.
 
 
 EventCameraManager::EventCameraManager() : m_recording(false) {

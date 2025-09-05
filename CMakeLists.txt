@@ -20,6 +20,22 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native")
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra")
 
+# ----------------------------
+# Testing (GoogleTest) Setup
+# ----------------------------
+set(FETCHCONTENT_BASE_DIR ${CMAKE_SOURCE_DIR}/.fcdeps) # set a custom base dir for FetchContent, to enable persistance when removign the build dir
+include(FetchContent)
+set(BUILD_GMOCK OFF CACHE BOOL "Disable GMock" FORCE)
+set(INSTALL_GTEST OFF CACHE BOOL "Disable gtest install" FORCE)
+FetchContent_Declare(
+    googletest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.zip
+)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+
 # Find required packages
 find_package(Threads REQUIRED)
 
@@ -181,3 +197,8 @@ set_target_properties(video_player PROPERTIES
 #  // Copy DLL to output directory
 # # Generic c++
 # ids_peak_deploy(${SAMPLE_TARGET_NAME})
+
+# ----------------------------
+# Tests
+# ----------------------------
+add_subdirectory(tests)
