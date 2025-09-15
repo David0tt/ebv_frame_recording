@@ -46,6 +46,7 @@ void EventCameraManager::openAndSetupDevices(const std::vector<CameraConfig>& ca
         m_liveEventBuffers.resize(m_cameras.size());
         m_eventBufferMutexes.resize(m_cameras.size());
         m_eventFrameCounters.resize(m_cameras.size());
+    m_startedForStreaming.assign(m_cameras.size(), false);
         for (size_t i = 0; i < m_cameras.size(); ++i) {
             m_eventBufferMutexes[i] = std::make_unique<std::mutex>();
             m_eventFrameCounters[i] = 0;
@@ -170,12 +171,16 @@ void EventCameraManager::startRecording(const std::string& outputPath, const std
             }
             std::cout << "Started recording " << cameraType << " camera " << i << " to: " << filename << std::endl;
             
-            if (!m_cameras[i]->start()) {
-                throw std::runtime_error("Failed to start camera " + std::to_string(i));
+            // If camera is already running (e.g., due to live preview), don't try to start again
+            if (!m_cameras[i]->is_running()) {
+                if (!m_cameras[i]->start()) {
+                    throw std::runtime_error("Failed to start camera " + std::to_string(i));
+                }
+                const std::string capitalizedType = (i == 0) ? "Master" : "Slave";
+                std::cout << capitalizedType << " camera " << i << " started" << std::endl;
+            } else {
+                std::cout << "Camera " << i << " already running; continuing with recording" << std::endl;
             }
-            
-            const std::string capitalizedType = (i == 0) ? "Master" : "Slave";
-            std::cout << capitalizedType << " camera " << i << " started" << std::endl;
         }
 
         m_recording = true;
@@ -192,16 +197,31 @@ void EventCameraManager::stopRecording() {
     }
     
     try {
+        // If live streaming is active, briefly pause to allow writer to flush events
+        bool resumeStreaming = false;
+        if (m_liveStreaming) {
+            stopLiveStreaming();
+            resumeStreaming = true;
+        }
         for (size_t i = 0; i < m_cameras.size(); ++i) {
             if (m_cameras[i]) {
                 m_cameras[i]->stop_recording();
-                m_cameras[i]->stop();
-                const std::string cameraType = (i == 0) ? "master" : "slave";
-                std::cout << "Stopped " << cameraType << " camera " << i << std::endl;
+                // If live streaming is still active (preview mode), keep camera running
+                if (!m_liveStreaming) {
+                    m_cameras[i]->stop();
+                    const std::string cameraType = (i == 0) ? "master" : "slave";
+                    std::cout << "Stopped " << cameraType << " camera " << i << std::endl;
+                } else {
+                    std::cout << "Stopped recording on camera " << i << " (kept running for preview)" << std::endl;
+                }
             }
         }
         m_recording = false;
         std::cout << "Event camera recording stopped successfully for " << m_cameras.size() << " cameras" << std::endl;
+        // Resume live streaming if it was active before
+        if (resumeStreaming) {
+            startLiveStreaming();
+        }
     } catch (const std::exception& e) {
         std::cerr << "Error stopping cameras: " << e.what() << std::endl;
     }
@@ -281,15 +301,43 @@ bool EventCameraManager::startLiveStreaming() {
     }
     
     try {
+        // Ensure cameras are running to deliver events
+        for (size_t i = 0; i < m_cameras.size(); ++i) {
+            if (!m_recording && m_cameras[i]) {
+                if (!m_cameras[i]->is_running()) {
+                    if (!m_cameras[i]->start()) {
+                        throw std::runtime_error("Failed to start camera for live streaming: " + std::to_string(i));
+                    }
+                    m_startedForStreaming[i] = true;
+                }
+            }
+        }
         // Initialize buffers and counters for each camera
+        // Resize and reset tracking vectors to match number of cameras
         m_liveEventBuffers.resize(m_cameras.size());
+        // Clear any lingering data in queues (defensive)
+        for (auto &q : m_liveEventBuffers) {
+            while (!q.empty()) q.pop();
+        }
         m_eventBufferMutexes.resize(m_cameras.size());
-        m_eventFrameCounters.resize(m_cameras.size(), 0);
+        for (size_t i = 0; i < m_eventBufferMutexes.size(); ++i) {
+            if (!m_eventBufferMutexes[i]) {
+                m_eventBufferMutexes[i] = std::make_unique<std::mutex>();
+            }
+        }
+        m_eventFrameCounters.resize(m_cameras.size());
+        for (size_t i = 0; i < m_eventFrameCounters.size(); ++i) {
+            m_eventFrameCounters[i] = 0;
+        }
+        // Ensure started-for-streaming tracking matches camera count
+        if (m_startedForStreaming.size() != m_cameras.size()) {
+            m_startedForStreaming.assign(m_cameras.size(), false);
+        }
         
         // Start streaming threads for each camera
         m_liveStreaming = true;
         for (size_t i = 0; i < m_cameras.size(); ++i) {
-            m_eventStreamingThreads.emplace_back(&EventCameraManager::eventStreamingWorker, this, i);
+            m_eventStreamingThreads.emplace_back(&EventCameraManager::eventStreamingWorker, this, static_cast<int>(i));
         }
         
         std::cout << "Started live streaming for " << m_cameras.size() << " event cameras" << std::endl;
@@ -327,12 +375,34 @@ void EventCameraManager::stopLiveStreaming() {
     m_eventBufferMutexes.clear();
     m_eventFrameCounters.clear();
     
+    // If we started cameras solely for streaming, stop them
+    for (size_t i = 0; i < m_cameras.size(); ++i) {
+        if (!m_recording && m_startedForStreaming.size() > i && m_startedForStreaming[i]) {
+            try {
+                m_cameras[i]->stop();
+            } catch (...) {}
+            m_startedForStreaming[i] = false;
+        }
+    }
+    
         
     std::cout << "Stopped live streaming for event cameras" << std::endl;
 }
 
 void EventCameraManager::eventStreamingWorker(int cameraId) {
     if (cameraId >= static_cast<int>(m_cameras.size())) {
+        return;
+    }
+    if (cameraId < 0) {
+        return;
+    }
+    // Validate mutex and counters
+    if (m_eventBufferMutexes.size() <= static_cast<size_t>(cameraId) || !m_eventBufferMutexes[cameraId]) {
+        std::cerr << "Streaming worker " << cameraId << ": missing mutex; aborting thread" << std::endl;
+        return;
+    }
+    if (m_eventFrameCounters.size() <= static_cast<size_t>(cameraId)) {
+        std::cerr << "Streaming worker " << cameraId << ": frame counter out of range; aborting thread" << std::endl;
         return;
     }
     
@@ -370,13 +440,14 @@ void EventCameraManager::eventStreamingWorker(int cameraId) {
                     frameData.isValid = !frame.empty();
                     
                     // Add to buffer
-                    {
+                    if (m_eventBufferMutexes.size() > static_cast<size_t>(cameraId) && m_eventBufferMutexes[cameraId]) {
                         std::lock_guard<std::mutex> lock(*m_eventBufferMutexes[cameraId]);
-                        m_liveEventBuffers[cameraId].push(frameData);
-                        
-                        // Keep buffer size under control
-                        while (m_liveEventBuffers[cameraId].size() > MAX_EVENT_BUFFER_SIZE) {
-                            m_liveEventBuffers[cameraId].pop();
+                        if (m_liveEventBuffers.size() > static_cast<size_t>(cameraId)) {
+                            m_liveEventBuffers[cameraId].push(frameData);
+                            // Keep buffer size under control
+                            while (m_liveEventBuffers[cameraId].size() > MAX_EVENT_BUFFER_SIZE) {
+                                m_liveEventBuffers[cameraId].pop();
+                            }
                         }
                     }
                     
@@ -394,9 +465,13 @@ void EventCameraManager::eventStreamingWorker(int cameraId) {
         std::cerr << "Error in event streaming worker " << cameraId << ": " << e.what() << std::endl;
     }
     
-    // Remove callback
-    if (m_cameras[cameraId]) {
-        m_cameras[cameraId]->cd().remove_callback(callbackId);
+    // Remove callback safely
+    try {
+        if (cameraId >= 0 && cameraId < static_cast<int>(m_cameras.size()) && m_cameras[cameraId]) {
+            m_cameras[cameraId]->cd().remove_callback(callbackId);
+        }
+    } catch (...) {
+        // Swallow any errors on teardown to avoid thread termination issues
     }
 }
 
@@ -426,9 +501,14 @@ bool EventCameraManager::getLatestEventFrame(int cameraId, cv::Mat& eventFrame, 
     if (cameraId < 0 || static_cast<size_t>(cameraId) >= m_cameras.size() || !m_liveStreaming) {
         return false;
     }
-    
+    // Validate data structures before dereferencing
+    if (m_eventBufferMutexes.size() <= static_cast<size_t>(cameraId) || !m_eventBufferMutexes[cameraId]) {
+        return false;
+    }
+    if (m_liveEventBuffers.size() <= static_cast<size_t>(cameraId)) {
+        return false;
+    }
     std::lock_guard<std::mutex> lock(*m_eventBufferMutexes[cameraId]);
-    
     if (m_liveEventBuffers[cameraId].empty()) {
         return false;
     }

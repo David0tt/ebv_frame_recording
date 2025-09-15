@@ -20,6 +20,11 @@ public:
         virtual void stopRecording() = 0;
         virtual void closeDevices() = 0;
         virtual bool getLatestFrame(int deviceId, FrameData& frameData) = 0;
+    // Preview-related
+    virtual void startPreview() = 0;
+    virtual void stopPreview() = 0;
+    virtual void startRecordingToPath(const std::string& outputPath) = 0;
+    virtual void stopRecordingOnly() = 0;
     };
     struct IEventCameraManager {
     using BiasConfig = std::unordered_map<std::string,int>;
@@ -60,15 +65,25 @@ public:
     void stopRecording();
     void closeDevices(); // Close and release all camera resources
     
+    // Live preview control (no disk I/O)
+    bool startPreview();
+    void stopPreview();
+    bool isPreviewing() const { return m_previewing; }
+    
+    // Async setup: open devices on a background thread and notify via callback
+    using SetupCallback = std::function<void(bool success, const std::string& message)>;
+    void configureAsync(const RecordingConfig& config, SetupCallback onComplete);
+    
     // Legacy interface for backward compatibility
     bool startRecording(const RecordingConfig& config);
     bool startRecording(const std::string& outputDirectory, const RecordingConfig& config);
     
     // Status and information
-    bool isRecording() const { return m_recording; }
+    virtual bool isRecording() const { return m_recording; }
     std::string getCurrentOutputDirectory() const { return m_currentOutputDir; }
     std::chrono::steady_clock::time_point getRecordingStartTime() const { return m_recordingStartTime; }
     double getRecordingDurationSeconds() const;
+    bool isReady() const { return m_configured; }
 
     // ---- Test helpers (Phase 2) ----
     // Exposes private timestamped directory generation for unit tests without
@@ -82,8 +97,8 @@ public:
     void setShutdownFlag(std::atomic<bool>* shutdownFlag) { m_shutdownFlag = shutdownFlag; }
     
     // Live data access for recording buffer
-    bool getLiveFrameData(int cameraId, cv::Mat& frame, size_t& frameIndex);
-    bool getLiveEventData(int cameraId, cv::Mat& eventFrame, size_t& frameIndex);
+    virtual bool getLiveFrameData(int cameraId, cv::Mat& frame, size_t& frameIndex);
+    virtual bool getLiveEventData(int cameraId, cv::Mat& eventFrame, size_t& frameIndex);
 
 private:
     std::string generateOutputDirectory(const std::string& prefix = "") const;
@@ -98,6 +113,7 @@ private:
     
     // Recording state
     std::atomic<bool> m_recording{false};
+    std::atomic<bool> m_previewing{false};
     std::atomic<bool> m_configured{false};
     std::string m_currentOutputDir;
     std::chrono::steady_clock::time_point m_recordingStartTime;

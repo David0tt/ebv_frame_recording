@@ -92,8 +92,9 @@ QImage EventCameraLoader::getFrame(size_t frameIndex, double fps) {
     
     // Calculate time range for this frame
     Metavision::timestamp frameDuration = static_cast<Metavision::timestamp>(1000000.0 / fps); // microseconds
-    Metavision::timestamp frameStartTime = frameIndex * frameDuration;
-    Metavision::timestamp frameEndTime = frameStartTime + frameDuration;
+    // Use slight overlap to avoid gaps at boundaries
+    Metavision::timestamp frameStartTime = (frameIndex == 0) ? 0 : frameIndex * frameDuration - frameDuration / 10;
+    Metavision::timestamp frameEndTime = (frameIndex + 1) * frameDuration + frameDuration / 10;
     
     // Generate frame on-demand using streaming approach (no pre-loading)
     QImage frame = generateFrameFromTimeRange(frameStartTime, frameEndTime);
@@ -142,7 +143,7 @@ QImage EventCameraLoader::generateFrameFromTimeRange(Metavision::timestamp start
         camera.start();
         
         auto processingStart = std::chrono::high_resolution_clock::now();
-        const auto maxProcessingTime = std::chrono::milliseconds(200); // Quick timeout
+    const auto maxProcessingTime = std::chrono::milliseconds(750); // Allow more time to gather events
         
         while (camera.is_running()) {
             auto now = std::chrono::high_resolution_clock::now();

@@ -103,6 +103,8 @@ private:
     
     // Live streaming support
     std::atomic<bool> m_liveStreaming{false};
+    // Track whether cameras were started for live streaming (to stop them accordingly)
+    std::vector<bool> m_startedForStreaming;
     std::vector<std::thread> m_eventStreamingThreads;
     std::vector<std::queue<EventFrameData>> m_liveEventBuffers;
     std::vector<std::unique_ptr<std::mutex>> m_eventBufferMutexes;

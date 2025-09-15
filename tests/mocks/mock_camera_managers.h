@@ -11,6 +11,10 @@ public:
     MOCK_METHOD(void, stopRecording, (), (override));
     MOCK_METHOD(void, closeDevices, (), (override));
     MOCK_METHOD(bool, getLatestFrame, (int deviceId, FrameData& frameData), (override));
+    MOCK_METHOD(void, startPreview, (), (override));
+    MOCK_METHOD(void, stopPreview, (), (override));
+    MOCK_METHOD(void, startRecordingToPath, (const std::string&), (override));
+    MOCK_METHOD(void, stopRecordingOnly, (), (override));
 };
 
 class MockEventCameraManager : public RecordingManager::IEventCameraManager {

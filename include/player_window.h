@@ -40,6 +40,7 @@ public:
     // Recording controls
     void startRecording();
     void stopRecording();
+    void stopRecordingShowPreview();
 
 protected:
     void resizeEvent(QResizeEvent *e) override;
@@ -63,6 +64,8 @@ private:
     QPushButton *m_openButton {nullptr};
     QLabel *m_pathLabel {nullptr};
     QPushButton *m_recordButton {nullptr};
+    QPushButton *m_stopShowRecButton {nullptr};
+    QPushButton *m_stopShowPrevButton {nullptr};
     QLabel *m_recordingStatusLabel {nullptr};
     CachedTimelineSlider *m_timelineSlider {nullptr};
     QPushButton *m_btnBack {nullptr};

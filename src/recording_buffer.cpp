@@ -41,7 +41,8 @@ void RecordingBuffer::setLiveMode(void* recordingManager) {
     m_currentMode = Mode::Live;
     
     RecordingManager* manager = static_cast<RecordingManager*>(m_recordingManager);
-    if (manager && manager->isRecording()) {
+    // Start buffering immediately if preview or recording is running
+    if (manager && (manager->isRecording() || manager->isPreviewing())) {
         startLiveBuffering();
         m_active = true;
         emit modeChanged(Mode::Live);
@@ -238,7 +239,8 @@ void RecordingBuffer::liveBufferWorker() {
     const auto updateInterval = std::chrono::milliseconds(33); // ~30 FPS
     
     RecordingManager* manager = static_cast<RecordingManager*>(m_recordingManager);
-    while (!m_stopBuffering && manager && manager->isRecording()) {
+    // Run the live buffering loop during recording or previewing
+    while (!m_stopBuffering && manager && (manager->isRecording() || manager->isPreviewing())) {
         auto now = std::chrono::steady_clock::now();
         
         // Process new data periodically

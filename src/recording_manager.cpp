@@ -17,6 +17,10 @@ public:
     void stopRecording() override { impl->stopRecording(); }
     void closeDevices() override { impl->closeDevices(); }
     bool getLatestFrame(int deviceId, FrameData& frameData) override { return impl->getLatestFrame(deviceId, frameData); }
+    void startPreview() override { impl->startPreview(); }
+    void stopPreview() override { impl->stopPreview(); }
+    void startRecordingToPath(const std::string& outputPath) override { impl->startRecordingToPath(outputPath); }
+    void stopRecordingOnly() override { impl->stopRecordingOnly(); }
 private:
     std::unique_ptr<FrameCameraManager> impl;
 };
@@ -90,7 +94,7 @@ bool RecordingManager::configure(const RecordingConfig& config) {
         auto eventConfigs = createEventCameraConfigs(config);
         m_eventCameraManager->openAndSetupDevices(eventConfigs);
         
-        m_configured = true;
+    m_configured = true;
         notifyStatus("Camera configuration completed successfully");
         return true;
         
@@ -125,7 +129,12 @@ bool RecordingManager::startRecording(const std::string& outputDirectory) {
         m_eventCameraManager->startRecording(outputDirectory, m_currentConfig.eventFileFormat);
         
         notifyStatus("Starting frame camera recording...");
-        m_frameCameraManager->startRecording(outputDirectory);
+        if (m_previewing) {
+            // If preview already running, just start disk writing
+            m_frameCameraManager->startRecordingToPath(outputDirectory);
+        } else {
+            m_frameCameraManager->startRecording(outputDirectory);
+        }
         
         // Start live streaming for both cameras
         if (!m_eventCameraManager->startLiveStreaming()) {
@@ -170,25 +179,31 @@ void RecordingManager::stopRecording() {
     notifyStatus("Stopping recording...");
     
     try {
-        // Stop frame camera recording first (typically faster to stop)
+        // Stop frame camera recording first (stop disk writer; keep preview acquisition if preview mode)
         notifyStatus("Stopping frame camera recording...");
         if (m_frameCameraManager) {
-            m_frameCameraManager->stopRecording();
+            if (m_previewing) m_frameCameraManager->stopRecordingOnly();
+            else m_frameCameraManager->stopRecording();
         }
         
         // Stop event camera recording and ensure flushing
         notifyStatus("Stopping event camera recording and flushing data...");
         if (m_eventCameraManager) {
+            // First stop recording streams (file close may require cameras to stop)
             m_eventCameraManager->stopRecording();
-            // Stop live streaming
+        }
+
+        // Mark recording ended before stopping live streaming so cameras can be stopped
+        m_recording = false;
+
+        // Stop live streaming only if not previewing (finalize files by stopping cameras)
+        if (m_eventCameraManager && !m_previewing) {
             m_eventCameraManager->stopLiveStreaming();
         }
         
         // Give extra time for buffers to flush to disk
         notifyStatus("Waiting for data flush to complete...");
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        
-        m_recording = false;
         
         auto duration = getRecordingDurationSeconds();
         notifyStatus("Recording completed successfully! Duration: " + 
@@ -209,6 +224,10 @@ void RecordingManager::closeDevices() {
         // Stop recording if still active
         if (m_recording) {
             stopRecording();
+        }
+        // Stop preview if running
+        if (m_previewing) {
+            stopPreview();
         }
         
         // Close event cameras
@@ -305,7 +324,7 @@ void RecordingManager::notifyStatus(const std::string& message) const {
 }
 
 bool RecordingManager::getLiveFrameData(int cameraId, cv::Mat& frame, size_t& frameIndex) {
-    if (!m_recording || !m_frameCameraManager) {
+    if ((!m_recording && !m_previewing) || !m_frameCameraManager) {
         return false;
     }
     
@@ -320,9 +339,44 @@ bool RecordingManager::getLiveFrameData(int cameraId, cv::Mat& frame, size_t& fr
 }
 
 bool RecordingManager::getLiveEventData(int cameraId, cv::Mat& eventFrame, size_t& frameIndex) {
-    if (!m_recording || !m_eventCameraManager) {
+    if ((!m_recording && !m_previewing) || !m_eventCameraManager) {
         return false;
     }
     
     return m_eventCameraManager->getLatestEventFrame(cameraId, eventFrame, frameIndex);
+}
+
+bool RecordingManager::startPreview() {
+    if (!m_configured) return false;
+    if (m_previewing) return true;
+    notifyStatus("Starting live preview...");
+    // Start acquisition on frame cameras
+    m_frameCameraManager->startPreview();
+    // Start live streaming on event cameras
+    if (!m_eventCameraManager->startLiveStreaming()) {
+        notifyStatus("Warning: Event camera live streaming failed to start");
+    }
+    m_previewing = true;
+    return true;
+}
+
+void RecordingManager::stopPreview() {
+    if (!m_previewing) return;
+    notifyStatus("Stopping live preview...");
+    // Stop live streaming on event cameras
+    m_eventCameraManager->stopLiveStreaming();
+    // Stop acquisition on frame cameras
+    m_frameCameraManager->stopPreview();
+    m_previewing = false;
+}
+
+void RecordingManager::configureAsync(const RecordingConfig& config, SetupCallback onComplete) {
+    // Launch on background thread
+    std::thread([this, config, onComplete](){
+        bool ok = configure(config);
+        if (onComplete) {
+            onComplete(ok, ok ? std::string("Camera configuration completed successfully")
+                              : std::string("Failed to configure cameras"));
+        }
+    }).detach();
 }
