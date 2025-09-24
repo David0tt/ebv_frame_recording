@@ -1,3 +1,5 @@
+# ⚠️ DISCLAIMER: THIS HAS BEEN PROGRAMMED IN LARGE PARTS USING AI CODING TOOLS. IN THE CURRENT STATE IT DOES NOT WORK RELIABLY
+
 
 # Features
 - Concurrent recording from 2 frame and 2 EBV cameras (tested)
